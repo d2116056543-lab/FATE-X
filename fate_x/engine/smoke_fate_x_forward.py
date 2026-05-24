@@ -16,6 +16,13 @@ except ModuleNotFoundError:  # pragma: no cover - environment compatibility shim
     import sys
     import types
     sys.modules["boto3"] = types.ModuleType("boto3")
+    botocore = types.ModuleType("botocore")
+    exceptions = types.ModuleType("botocore.exceptions")
+    class ClientError(Exception):
+        pass
+    exceptions.ClientError = ClientError
+    sys.modules["botocore"] = botocore
+    sys.modules["botocore.exceptions"] = exceptions
 
 from fate_x.models.video_token_reducer import VideoTokenReducer
 from fate_x.models.temporal_evidence_memory import TemporalEvidenceMemory
@@ -40,7 +47,7 @@ def build_shell_model(args: argparse.Namespace) -> MultitaskVideoTransformer:
         min_tokens=args.min_tokens,
         mode=args.video_token_reducer,
     )
-    model.fate_x_memory = None if args.temporal_evidence_memory == "none" else TemporalEvidenceMemory(args.dim, num_events=args.num_events)
+    model.fate_x_memory = None if args.temporal_evidence_memory == "none" else TemporalEvidenceMemory(args.dim, event_names=[f"event_{i}" for i in range(args.num_events)])
     return model
 
 
