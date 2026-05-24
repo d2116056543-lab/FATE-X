@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 from fairscale.nn.misc import checkpoint_wrapper
 import random
 from fate_x.models.video_token_reducer import VideoTokenReducer
@@ -37,6 +37,7 @@ class MultitaskVideoTransformer(torch.nn.Module):
                 keep_ratio=getattr(args, 'fate_x_keep_ratio', 0.5),
                 num_summary_tokens=getattr(args, 'fate_x_num_summary_tokens', 64),
                 min_tokens=getattr(args, 'fate_x_min_tokens', 128),
+                mode=self.video_token_reducer,
             )
         else:
             self.fate_x_reducer = None
@@ -205,3 +206,4 @@ class MultitaskVideoTransformer(torch.nn.Module):
     def freeze_backbone(self, freeze=True):
         for _, p in self.swin.named_parameters():
             p.requires_grad =  not freeze
+

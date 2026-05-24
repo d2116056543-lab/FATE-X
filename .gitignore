@@ -138,3 +138,11 @@ repro_runs/
 __pycache__/
 *.pyc
 
+
+# Keep FATE package code directories trackable even though root assets are ignored.
+!fate_x/models/
+!fate_x/models/**
+!fate_x/explain/
+!fate_x/explain/**
+!fate_x/engine/
+!fate_x/engine/**
