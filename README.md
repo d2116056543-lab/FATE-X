@@ -1,3 +1,26 @@
+<!-- FATE-X README BLOCK -->
+# FATE-X: ADAPT-Compatible Token Evidence and Phrase Faithfulness Extensions
+
+This repository is a FATE-X worktree derived from ADAPT. The original ADAPT README is preserved below for reproducibility, but the FATE-X entry points are the package modules under `fate_x/` and the added default-off ADAPT CLI flags.
+
+## Current FATE-X scope
+
+- Default-off ADAPT flags in `src/tasks/run_adapt.py`:
+  - `--fate_x_enabled`
+  - `--video_token_reducer none|merge|topk_merge`
+  - `--temporal_evidence_memory none|queries`
+  - `--phrase_faithfulness_enabled`
+- Token reducer and provenance: `fate_x/models/video_token_reducer.py`.
+- Event-query memory: `fate_x/models/temporal_evidence_memory.py`.
+- Phrase lexicon and optional phrase deletion/sufficiency aggregation:
+  - `fate_x/explain/phrase_attribution.py`
+  - `fate_x/explain/phrase_counterfactual.py`
+  - `python -m fate_x.engine.eval_phrase_faithfulness --help`
+
+## Important limits
+
+Lexical phrase hits alone are not visual faithfulness. The phrase faithfulness evaluator only reports deletion/sufficiency when perturbation score fields are present in prediction records; otherwise it explicitly reports lexical-only rows.
+
 # ADAPT: Action-aware Driving Caption Transformer
 
  <img src="docs/adapt-overview.jpg" width="650"> 
