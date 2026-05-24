@@ -1,0 +1,16 @@
+traffic_light:
+  words: ["traffic light", "light", "red light", "green light", "light turns"]
+stop_sign:
+  words: ["stop sign"]
+car_vehicle:
+  words: ["car", "vehicle", "truck", "bus", "traffic", "cars"]
+pedestrian:
+  words: ["pedestrian", "person", "people", "crossing"]
+left:
+  words: ["left", "left lane", "turning left"]
+right:
+  words: ["right", "right lane", "turning right"]
+clear:
+  words: ["clear", "no traffic", "empty"]
+obstacle:
+  words: ["obstacle", "blocking", "parked", "around"]

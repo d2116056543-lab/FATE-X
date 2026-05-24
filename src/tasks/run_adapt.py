@@ -10,6 +10,7 @@ import os.path as op
 import json
 import time
 import datetime
+import shutil
 import torch
 import torch.distributed as dist
 import gc
@@ -43,6 +44,55 @@ aml_run = Run.get_context()
 def compute_score_with_logits(logits, labels):
     logits = torch.max(logits, -1)[1].data # argmax
     return logits == labels
+
+
+def save_repro_checkpoint(training_saver, args, tag, step, model, optimizer, metadata):
+    """Save stable latest/best checkpoints without changing ADAPT's official checkpoint dirs."""
+    if not is_main_process():
+        return
+    checkpoint_dir = op.join(args.output_dir, tag)
+    if op.isdir(checkpoint_dir):
+        shutil.rmtree(checkpoint_dir)
+    training_saver.save_model(checkpoint_dir, step, model, optimizer)
+    with open(op.join(checkpoint_dir, 'repro_checkpoint_meta.json'), 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+
+def maybe_load_repro_optimizer(args, optimizer):
+    checkpoint_dir = getattr(args, 'resume_repro_checkpoint_dir', '')
+    if not checkpoint_dir or checkpoint_dir == 'None':
+        return None
+    optimizer_path = op.join(checkpoint_dir, 'optmizer_state.bin')
+    meta_path = op.join(checkpoint_dir, 'repro_checkpoint_meta.json')
+    meta = {}
+    if op.isfile(meta_path):
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+    if op.isfile(optimizer_path):
+        try:
+            dump = torch.load(optimizer_path, map_location='cpu')
+            optimizer.load_state_dict(dump.get('optimizer', dump))
+            logger.info(f"Loaded repro optimizer state from {optimizer_path}")
+        except Exception as e:
+            logger.info(f"Could not load repro optimizer state from {optimizer_path}: {e}")
+    return meta
+
+
+def maybe_fast_forward_repro_scheduler(args, scheduler):
+    meta = getattr(args, 'resume_repro_meta', None)
+    if not meta:
+        return
+    global_step = int(meta.get('global_step', 0))
+    if global_step <= 0:
+        return
+    try:
+        scheduler.step(global_step)
+    except TypeError:
+        scheduler.last_epoch = global_step
+        if hasattr(scheduler, '_step_count'):
+            scheduler._step_count = global_step
+    logger.info(f"Fast-forwarded repro scheduler to global_step={global_step}")
+
 
 def mixed_precision_init(args, model):
     max_iter = args.max_iter
@@ -130,6 +180,15 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
     best_score_exp = 0
     best_B4_exp = 0
     best_score_des_add_exp = 0
+    best_repro_score = None
+    best_repro_meta = op.join(args.output_dir, 'checkpoint_best', 'repro_checkpoint_meta.json')
+    if op.isfile(best_repro_meta):
+        try:
+            with open(best_repro_meta, 'r') as f:
+                best_repro_score = float(json.load(f).get('best_metric_value'))
+            logger.info(f"Loaded existing checkpoint_best score: {best_repro_score}")
+        except Exception as e:
+            logger.info(f"Could not load existing checkpoint_best metadata: {e}")
 
     start_training_time = time.time()
     end = time.time()
@@ -137,7 +196,10 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
     running_loss = RunningMeter('train_loss')
     running_batch_acc = RunningMeter('train_batch_acc')
 
-    if args.restore_ratio > 0:
+    if getattr(args, 'resume_repro_meta', None):
+        global_step = int(args.resume_repro_meta.get('global_step', 0))
+        logger.info(f"Resume repro training metadata global_step={global_step}")
+    elif args.restore_ratio > 0:
         restorer = TrainingRestorer(args, model, optimizer)
         global_step = restorer.global_step
     else:
@@ -291,6 +353,20 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
 
                 if get_world_size() > 1:
                     dist.barrier()    
+                if is_main_process():
+                    pre_eval_meta = {
+                        'tag': 'checkpoint_latest',
+                        'epoch': int(epoch),
+                        'iteration': int(iteration),
+                        'global_step': int(global_step),
+                        'metric_name': None,
+                        'metric_value': None,
+                        'saved_at': datetime.datetime.now().isoformat(),
+                        'note': 'pre_eval_latest_for_resume',
+                    }
+                    save_repro_checkpoint(
+                        training_saver, args, 'checkpoint_latest',
+                        global_step, model, optimizer, pre_eval_meta)
                 if args.evaluate_during_training:
                     logger.info(f"Perform evaluation at iteration {iteration}, global_step {global_step}")
                     evaluate_file = evaluate(args, val_dataloader, model, tokenizer, checkpoint_dir)
@@ -301,6 +377,8 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
 
                     # this is dull and foolish but effective and efficient
                     if is_main_process():
+                        repro_metric_name = None
+                        repro_metric_value = None
                         if args.use_sep_cap:
                             evaluate_files = [evaluate_file.replace('BDDX', 'BDDX_des'), evaluate_file.replace('BDDX', 'BDDX_exp')]
                             caps_name = ['des', 'exp']
@@ -335,6 +413,8 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                                     eval_log.append(res)
                                     with open(op.join(args.output_dir, args.val_yaml.replace('/','_')+'eval_logs.json'), 'w') as f:
                                         json.dump(eval_log, f)
+                                    repro_metric_name = 'CIDEr_des_plus_exp'
+                                    repro_metric_value = float(score_des_add_exp)
                         else:
                             with open(evaluate_file, 'r') as f:
                                 res = json.load(f)
@@ -349,6 +429,29 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                             eval_log.append(res)
                             with open(op.join(args.output_dir, args.val_yaml.replace('/','_')+'eval_logs.json'), 'w') as f:
                                 json.dump(eval_log, f)
+                            repro_metric_name = 'CIDEr'
+                            repro_metric_value = float(res['CIDEr'])
+                        if repro_metric_value is not None:
+                            repro_meta = {
+                                'tag': 'checkpoint_latest',
+                                'epoch': int(epoch),
+                                'iteration': int(iteration),
+                                'global_step': int(global_step),
+                                'metric_name': repro_metric_name,
+                                'metric_value': repro_metric_value,
+                                'saved_at': datetime.datetime.now().isoformat(),
+                            }
+                            save_repro_checkpoint(
+                                training_saver, args, 'checkpoint_latest',
+                                global_step, model, optimizer, repro_meta)
+                            if best_repro_score is None or repro_metric_value > best_repro_score:
+                                best_repro_score = repro_metric_value
+                                best_meta = dict(repro_meta)
+                                best_meta['tag'] = 'checkpoint_best'
+                                best_meta['best_metric_value'] = best_repro_score
+                                save_repro_checkpoint(
+                                    training_saver, args, 'checkpoint_best',
+                                    global_step, model, optimizer, best_meta)
                     if get_world_size() > 1:
                         dist.barrier()                
 
@@ -743,7 +846,18 @@ def get_custom_args(base_config):
     parser.add_argument('--att_mask_expansion', type=int, default=-1,
                         help="-1: random init, 0: random init and then diag-based copy, 1: interpolation")
     parser.add_argument('--resume_checkpoint', type=str, default='None')
+    parser.add_argument('--resume_repro_checkpoint_dir', type=str, default='',
+                        help="Resume from a repro checkpoint directory containing model.bin, optmizer_state.bin, and repro_checkpoint_meta.json.")
     parser.add_argument('--test_video_fname', type=str, default='None')
+    # FATE-X flags are default-off so original ADAPT behavior is preserved.
+    parser.add_argument('--fate_x_enabled', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--video_token_reducer', type=str, default='none', choices=['none', 'merge', 'topk_merge'])
+    parser.add_argument('--fate_x_keep_ratio', type=float, default=0.5)
+    parser.add_argument('--fate_x_num_summary_tokens', type=int, default=64)
+    parser.add_argument('--fate_x_min_tokens', type=int, default=128)
+    parser.add_argument('--temporal_evidence_memory', type=str, default='none', choices=['none', 'queries'])
+    parser.add_argument('--phrase_faithfulness_enabled', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--visualize_phrase_attention', type=str_to_bool, nargs='?', const=True, default=False)
     args = base_config.parse_args()
     return args
 
@@ -758,6 +872,11 @@ def main(args):
     
     check_arguments(args)
     logger.info("Check arguments")
+
+    if args.resume_repro_checkpoint_dir and args.resume_repro_checkpoint_dir != 'None':
+        args.resume_checkpoint = op.join(args.resume_repro_checkpoint_dir, 'model.bin')
+        logger.info(f"Resume repro checkpoint dir: {args.resume_repro_checkpoint_dir}")
+        logger.info(f"Resume repro model checkpoint: {args.resume_checkpoint}")
 
     mkdir(args.output_dir)
     logger.info(f"creating output_dir at: {args.output_dir}")
@@ -902,6 +1021,8 @@ def main(args):
         # args.save_steps = 10
 
         args, vl_transformer, optimizer, scheduler = mixed_precision_init(args, vl_transformer)
+        args.resume_repro_meta = maybe_load_repro_optimizer(args, optimizer)
+        maybe_fast_forward_repro_scheduler(args, scheduler)
         train(args, train_dataloader, val_dataloader, vl_transformer, tokenizer, training_saver, optimizer, scheduler)
 
     elif args.do_eval:

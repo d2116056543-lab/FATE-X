@@ -1,6 +1,8 @@
 import torch
 from fairscale.nn.misc import checkpoint_wrapper
 import random
+from fate_x.models.video_token_reducer import VideoTokenReducer
+from fate_x.models.temporal_evidence_memory import TemporalEvidenceMemory
 
 
 class VideoTransformer(torch.nn.Module):
@@ -25,6 +27,23 @@ class VideoTransformer(torch.nn.Module):
         self.use_grid_feat = args.grid_feat
         self.latent_feat_size = self.swin.backbone.norm.normalized_shape[0]
         self.fc = torch.nn.Linear(self.latent_feat_size, self.img_feature_dim)
+        self.fate_x_enabled = getattr(args, 'fate_x_enabled', False)
+        self.video_token_reducer = getattr(args, 'video_token_reducer', 'none')
+        self.temporal_evidence_memory = getattr(args, 'temporal_evidence_memory', 'none')
+        self.fate_x_last_stats = {}
+        if self.fate_x_enabled and self.video_token_reducer != 'none':
+            self.fate_x_reducer = VideoTokenReducer(
+                self.img_feature_dim,
+                keep_ratio=getattr(args, 'fate_x_keep_ratio', 0.5),
+                num_summary_tokens=getattr(args, 'fate_x_num_summary_tokens', 64),
+                min_tokens=getattr(args, 'fate_x_min_tokens', 128),
+            )
+        else:
+            self.fate_x_reducer = None
+        if self.fate_x_enabled and self.temporal_evidence_memory == 'queries':
+            self.fate_x_memory = TemporalEvidenceMemory(self.img_feature_dim)
+        else:
+            self.fate_x_memory = None
         self.compute_mask_on_the_fly = False # deprecated
         self.mask_prob = args.mask_prob
         self.mask_token_id = -1
@@ -80,6 +99,10 @@ class VideoTransformer(torch.nn.Module):
             car_infos = self.expand_car_info(car_infos)
             vid_feats = torch.cat((vid_feats, car_infos), dim=1)
 
+        # Optional FATE-X token reducer/event memory. Default-off preserves ADAPT.
+        if self.fate_x_enabled:
+            vid_feats = self._apply_fate_x_tokens(vid_feats, kwargs)
+
         # prepare VL transformer inputs
         kwargs['img_feats'] = vid_feats
 
@@ -112,6 +135,46 @@ class VideoTransformer(torch.nn.Module):
 
         return outputs
     
+
+
+    def _resize_fate_x_attention_mask(self, kwargs, new_vid_len):
+        """Resize multimodal attention mask after FATE-X token compression.
+
+        ADAPT's video tokens occupy the final max_img_seq_length positions. When
+        token count changes we preserve the text-text block and create fully
+        visible text/video and video/video blocks for the new visual tokens.
+        """
+        if 'attention_mask' not in kwargs:
+            return
+        attention_mask = kwargs['attention_mask']
+        if attention_mask is None or attention_mask.dim() != 3:
+            return
+        old_total = attention_mask.shape[-1]
+        old_vid_len = int(self.max_img_seq_length)
+        text_len = max(old_total - old_vid_len, 0)
+        new_total = text_len + int(new_vid_len)
+        if new_total == old_total:
+            return
+        new_mask = attention_mask.new_ones((attention_mask.shape[0], new_total, new_total))
+        if text_len > 0:
+            new_mask[:, :text_len, :text_len] = attention_mask[:, :text_len, :text_len]
+        kwargs['attention_mask'] = new_mask
+
+    def _apply_fate_x_tokens(self, vid_feats, kwargs):
+        provenance = None
+        if self.fate_x_reducer is not None:
+            reduced = self.fate_x_reducer(vid_feats)
+            vid_feats = reduced['tokens']
+            provenance = reduced['provenance']
+            self.fate_x_last_stats = dict(reduced['stats'])
+        if self.fate_x_memory is not None:
+            mem = self.fate_x_memory(vid_feats)
+            vid_feats = torch.cat([mem['event_tokens'], vid_feats], dim=1)
+            self.fate_x_last_stats.update({'event_tokens': mem['event_tokens'].shape[1]})
+        self.fate_x_last_provenance = provenance
+        self._resize_fate_x_attention_mask(kwargs, vid_feats.shape[1])
+        return vid_feats
+
     def get_loss_sparsity(self, video_attention):
         sparsity_loss = 0
         sparsity_loss += (torch.mean(torch.abs(video_attention)))

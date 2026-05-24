@@ -4,7 +4,8 @@ pythonpath = os.path.abspath(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 print(pythonpath)
 sys.path.insert(0, pythonpath)
-sys.path.append("/data/hdd01/jinbu/SwinBERT-main")
+sys.path.append(os.environ.get("ADAPT_SWINBERT_ROOT",
+    "/data/hdd01/jinbu/SwinBERT-main"))
 import os.path as op
 import json, yaml, code, io
 import numpy as np
@@ -17,21 +18,27 @@ from collections import defaultdict
 # !!! please follow the readme to organize the output of the previous script 
 
 # # FIXME: data path to raw video files
-data_vid_id = "/data/hdd01/jinbu/BDDX/BDD-V/Videos/videos//{}"
-dataset_path = './datasets/BDDX/'
+data_vid_id = os.environ.get("ADAPT_BDDX_RAW_VIDEO_TEMPLATE",
+    "/data/hdd01/jinbu/BDDX/BDD-V/Videos/videos//{}")
+dataset_path = os.environ.get("ADAPT_BDDX_DATASET_DIR", './datasets/BDDX/')
 # annotations downloaded from official downstream dataset
-BDDX_anns = 'datasets/BDDX/captions_BDDX.json'
-BDDX_subtitle = 'datasets/BDDX/captions_BDDX.json'
+BDDX_anns = os.environ.get("ADAPT_BDDX_CAPTIONS_JSON",
+    'datasets/BDDX/captions_BDDX.json')
+BDDX_subtitle = os.environ.get("ADAPT_BDDX_SUBTITLE_JSON", BDDX_anns)
 
 # To generate tsv files:
 # {}.img.tsv: we use it to store video path info 
-visual_file = "./datasets/BDDX/{}.img.tsv"
+visual_file = os.environ.get("ADAPT_BDDX_VISUAL_FILE_TEMPLATE",
+    op.join(dataset_path, "{}.img.tsv"))
 # {}.caption.tsv: we use it to store  captions
-cap_file = "./datasets/BDDX/{}.caption.tsv"
+cap_file = os.environ.get("ADAPT_BDDX_CAPTION_FILE_TEMPLATE",
+    op.join(dataset_path, "{}.caption.tsv"))
 # {}.linelist.tsv: since each video may have multiple captions, we need to store the corresponance between vidoe id and caption id
-linelist_file = "./datasets/BDDX/{}.linelist.tsv"
+linelist_file = os.environ.get("ADAPT_BDDX_LINELIST_FILE_TEMPLATE",
+    op.join(dataset_path, "{}.linelist.tsv"))
 # {}.label.tsv: we store any useful labels or metadara here, such as object tags. Now we only have captions. maybe can remove it in future.
-label_file = "./datasets/BDDX/{}.label.tsv"
+label_file = os.environ.get("ADAPT_BDDX_LABEL_FILE_TEMPLATE",
+    op.join(dataset_path, "{}.label.tsv"))
 
 def write_to_yaml_file(context, file_name):
     with open(file_name, 'w') as fp:
@@ -93,6 +100,7 @@ def dump_tsv_gt_to_coco_format(caption_tsv_file, outfile):
 
 
 def process_new(split):
+    os.makedirs(dataset_path, exist_ok=True)
     f = open(BDDX_anns, 'r')
     database = json.load(f)
     
@@ -174,7 +182,7 @@ def process_new(split):
     all_field = ['img', 'label', 'caption', 'caption_linelist', 'caption_coco_format']
     all_tsvfile = [resolved_visual_file, resolved_label_file, resolved_cap_file, resolved_cap_linelist_file, gt_file_coco]
     for field, tsvpath in zip(all_field, all_tsvfile):
-        out_cfg[field] = tsvpath.split('/')[-1]
+        out_cfg[field] = op.basename(tsvpath)
     out_yaml = '{}.yaml'.format(split)
     write_to_yaml_file(out_cfg, op.join(dataset_path, out_yaml))
     print('Create yaml file: {}'.format(op.join(dataset_path, out_yaml)))

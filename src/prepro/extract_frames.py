@@ -6,6 +6,17 @@ import subprocess
 import datetime
 import  json
 
+
+def _env_path(name, default):
+    return os.environ.get(name, default)
+
+
+def _with_trailing_sep(path):
+    if path.endswith(("/", "\\")):
+        return path
+    return path + os.sep
+
+
 def get_video_duration(video_file):
     result = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                              "format=duration", "-of",
@@ -158,7 +169,7 @@ def extract_all_frames(video_root_dir, save_dir, fps, num_frames,
             eTime = int(line_item['eTime'])
             caption_id = str(line_item['id']).zfill(5)
             
-            input_file = video_root_dir+vidName+'.mov'
+            input_file = os.path.join(video_root_dir, vidName + '.mov')
             # input_file = input_file.replace('datasets','_datasets')
             if os.path.isfile(input_file):
                 videoFiles.append((input_file, sTime, eTime, caption_id))
@@ -185,18 +196,25 @@ def extract_all_frames(video_root_dir, save_dir, fps, num_frames,
 
 def main():
 
-    # FIXME: put the raw video path here
-    video_root_dir = "/data/hdd01/jinbu/BDDX/BDD-V/Videos/videos/"
+    # FIXME: put the raw video path here.
+    # ADAPT_BDDX_* env vars only replace hard paths; extraction logic is unchanged.
+    video_root_dir = _with_trailing_sep(_env_path(
+        "ADAPT_BDDX_RAW_VIDEO_DIR",
+        "/data/hdd01/jinbu/BDDX/BDD-V/Videos/videos/"))
 
     # FIXME: the frame save dir
-    save_dir = 'data/32frames'
+    save_dir = _env_path("ADAPT_BDDX_FRAME_DIR", 'data/32frames')
 
     # FIXME: the caption annotation file
-    video_info_tsv = '/data/hdd01/jinbu/video_preprocess/code/data/processed/captions_BDDX.json'
+    video_info_tsv = _env_path(
+        "ADAPT_BDDX_CAPTIONS_JSON",
+        '/data/hdd01/jinbu/video_preprocess/code/data/processed/captions_BDDX.json')
 
+    num_workers = int(os.environ.get("ADAPT_BDDX_NUM_WORKERS", "16"))
+    num_frames = int(os.environ.get("ADAPT_BDDX_NUM_FRAMES", "32"))
     extract_all_frames(video_root_dir, save_dir, 1,
-                       32, video_info_tsv, corrupt_files=None,
-                       num_workers=16, debug=False)
+                       num_frames, video_info_tsv, corrupt_files=None,
+                       num_workers=num_workers, debug=False)
 
 
 if __name__ == '__main__':
