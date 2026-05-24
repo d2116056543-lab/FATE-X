@@ -154,3 +154,5 @@ tests/**/__pycache__/
 tests/**/*.pyc
 src/**/__pycache__/
 src/**/*.pyc
+
+.background_runs/
