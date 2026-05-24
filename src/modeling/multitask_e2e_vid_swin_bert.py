@@ -1,4 +1,4 @@
-﻿import torch
+import torch
 from fairscale.nn.misc import checkpoint_wrapper
 import random
 from fate_x.models.video_token_reducer import VideoTokenReducer

@@ -146,3 +146,11 @@ __pycache__/
 !fate_x/explain/**
 !fate_x/engine/
 !fate_x/engine/**
+
+# Re-ignore generated Python artifacts after package unignore rules.
+fate_x/**/__pycache__/
+fate_x/**/*.pyc
+tests/**/__pycache__/
+tests/**/*.pyc
+src/**/__pycache__/
+src/**/*.pyc
