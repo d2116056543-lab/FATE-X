@@ -36,7 +36,7 @@ def main() -> None:
     args = ap.parse_args()
     rows = []
     phrase_records = []
-    for line in Path(args.predictions_jsonl).read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in Path(args.predictions_jsonl).read_text(encoding="utf-8-sig", errors="ignore").splitlines():
         if not line.strip():
             continue
         rec = json.loads(line)
