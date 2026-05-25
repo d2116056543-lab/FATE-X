@@ -864,7 +864,7 @@ def get_custom_args(base_config):
     parser.add_argument('--fate_x_summary_mode', type=str, default='cluster', choices=['global_mean', 'cluster', 'per_frame_cluster'])
     parser.add_argument('--fate_x_text_reduce_only', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--fate_x_reduce_control', type=str_to_bool, nargs='?', const=True, default=False)
-    parser.add_argument('--fate_x_control_reducer', type=str, default='none', choices=['none', 'temporal_ordered_topk'])
+    parser.add_argument('--fate_x_control_reducer', type=str, default='none', choices=['none', 'per_frame_topk_merge', 'temporal_ordered_topk'])
     parser.add_argument('--temporal_evidence_memory', type=str, default='none', choices=['none', 'queries'])
     parser.add_argument('--phrase_faithfulness_enabled', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--visualize_phrase_attention', type=str_to_bool, nargs='?', const=True, default=False)

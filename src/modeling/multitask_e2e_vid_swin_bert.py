@@ -30,17 +30,39 @@ class MultitaskVideoTransformer(torch.nn.Module):
         self.fate_x_enabled = getattr(args, 'fate_x_enabled', False)
         self.video_token_reducer = getattr(args, 'video_token_reducer', 'none')
         self.temporal_evidence_memory = getattr(args, 'temporal_evidence_memory', 'none')
+        self.fate_x_text_reduce_only = getattr(args, 'fate_x_text_reduce_only', True)
+        self.fate_x_reduce_control = getattr(args, 'fate_x_reduce_control', False)
+        self.fate_x_control_reducer_mode = getattr(args, 'fate_x_control_reducer', 'none')
+        if self.fate_x_control_reducer_mode == 'temporal_ordered_topk':
+            self.fate_x_control_reducer_mode = 'per_frame_topk_merge'
         self.fate_x_last_stats = {}
+        self.fate_x_last_provenance = None
         if self.fate_x_enabled and self.video_token_reducer != 'none':
             self.fate_x_reducer = VideoTokenReducer(
                 self.img_feature_dim,
                 keep_ratio=getattr(args, 'fate_x_keep_ratio', 0.5),
-                num_summary_tokens=getattr(args, 'fate_x_num_summary_tokens', 64),
+                num_summary_tokens=getattr(args, 'fate_x_num_summary_tokens', 1),
                 min_tokens=getattr(args, 'fate_x_min_tokens', 128),
                 mode=self.video_token_reducer,
+                temporal_tokens=getattr(args, 'fate_x_temporal_tokens', None) or None,
+                spatial_tokens_per_frame=getattr(args, 'fate_x_spatial_tokens_per_frame', None) or None,
+                summary_mode=getattr(args, 'fate_x_summary_mode', 'cluster'),
             )
         else:
             self.fate_x_reducer = None
+        if self.fate_x_enabled and self.fate_x_reduce_control and self.fate_x_control_reducer_mode != 'none':
+            self.fate_x_control_reducer = VideoTokenReducer(
+                self.img_feature_dim,
+                keep_ratio=getattr(args, 'fate_x_keep_ratio', 0.5),
+                num_summary_tokens=getattr(args, 'fate_x_num_summary_tokens', 1),
+                min_tokens=getattr(args, 'fate_x_min_tokens', 128),
+                mode=self.fate_x_control_reducer_mode,
+                temporal_tokens=getattr(args, 'fate_x_temporal_tokens', None) or None,
+                spatial_tokens_per_frame=getattr(args, 'fate_x_spatial_tokens_per_frame', None) or None,
+                summary_mode=getattr(args, 'fate_x_summary_mode', 'cluster'),
+            )
+        else:
+            self.fate_x_control_reducer = None
         if self.fate_x_enabled and self.temporal_evidence_memory == 'queries':
             self.fate_x_memory = TemporalEvidenceMemory(self.img_feature_dim)
         else:
@@ -95,14 +117,44 @@ class MultitaskVideoTransformer(torch.nn.Module):
         vid_feats = vid_feats.view(B, -1, self.latent_feat_size)
 
         # use an mlp to transform video token dimension
-        vid_feats = self.fc(vid_feats)
+        vid_feats_dense = self.fc(vid_feats)
+        vid_feats_text = vid_feats_dense
+        vid_feats_control = vid_feats_dense
+
+        text_kwargs = dict(kwargs)
+        control_kwargs = dict(kwargs)
 
         # Optional FATE-X token reducer/event memory. Default-off preserves ADAPT.
+        # Caption/text sees reduced/event evidence tokens; control/CSP keeps dense
+        # tokens unless an explicitly temporal-order-preserving control reducer is enabled.
         if self.fate_x_enabled:
-            vid_feats = self._apply_fate_x_tokens(vid_feats, kwargs)
+            vid_feats_text = self._apply_fate_x_tokens(vid_feats_text, text_kwargs)
+            if self.fate_x_reduce_control and self.fate_x_control_reducer is not None:
+                control_reduced = self.fate_x_control_reducer(vid_feats_control)
+                vid_feats_control = control_reduced['tokens']
+                self.fate_x_last_stats.update({
+                    'control_reduced_tokens': int(vid_feats_control.shape[1]),
+                    'control_branch_dense': False,
+                })
+            else:
+                self.fate_x_last_stats.update({
+                    'control_reduced_tokens': int(vid_feats_control.shape[1]),
+                    'control_branch_dense': True,
+                })
+        else:
+            self.fate_x_last_stats = {}
 
-        # prepare VL transformer inputs
-        kwargs['img_feats'] = vid_feats
+        self.fate_x_last_stats.update({
+            'dense_visual_tokens': int(vid_feats_dense.shape[1]),
+            'text_visual_tokens': int(vid_feats_text.shape[1]),
+            'control_visual_tokens': int(vid_feats_control.shape[1]),
+            'fate_x_text_reduce_only': bool(self.fate_x_text_reduce_only),
+            'fate_x_reduce_control': bool(self.fate_x_reduce_control),
+        })
+
+        # prepare branch-specific transformer inputs
+        text_kwargs['img_feats'] = vid_feats_text
+        control_kwargs['img_feats'] = vid_feats_control
 
         # disable bert attention outputs to avoid some bugs
         if self.trans_encoder.bert.encoder.output_attentions:
@@ -110,13 +162,13 @@ class MultitaskVideoTransformer(torch.nn.Module):
         
         if self.only_signal:
             # only Control Signal Prediction head 
-            sensor_outputs = self.sensor_pred_head(*args, **kwargs)        
+            sensor_outputs = self.sensor_pred_head(*args, **control_kwargs)
             return sensor_outputs
         
         else:
             # learn soft attention mask
             if self.learn_mask_enabled:
-                kwargs['attention_mask'] = kwargs['attention_mask'].float()
+                text_kwargs['attention_mask'] = text_kwargs['attention_mask'].float()
                 vid_att_len = self.max_img_seq_length
                 learn_att = self.learn_vid_att.weight.reshape(vid_att_len,vid_att_len)
                 learn_att = self.sigmoid(learn_att)
@@ -127,13 +179,13 @@ class MultitaskVideoTransformer(torch.nn.Module):
                     learn_att = (learn_att>=0.5)*1.0
                     learn_att = learn_att.cuda()
                     learn_att.requires_grad = False
-                kwargs['attention_mask'][:, -vid_att_len::, -vid_att_len::] = learn_att
+                text_kwargs['attention_mask'][:, -vid_att_len::, -vid_att_len::] = learn_att
 
             # Driving Caption Generation head, output is ()
-            outputs = self.trans_encoder(*args, **kwargs)
+            outputs = self.trans_encoder(*args, **text_kwargs)
 
             # Control Signal Prediction head, output is ()
-            sensor_outputs = self.sensor_pred_head(*args, **kwargs)
+            sensor_outputs = self.sensor_pred_head(*args, **control_kwargs)
 
             outputs = outputs + sensor_outputs
 

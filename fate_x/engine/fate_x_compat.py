@@ -21,9 +21,15 @@ def validate_fate_x_mask_compatibility(args) -> None:
         )
     reduce_control = bool(getattr(args, "fate_x_reduce_control", False))
     control_reducer = str(getattr(args, "fate_x_control_reducer", "none"))
-    if fate_enabled and reduce_control and control_reducer not in {"temporal_ordered_topk"}:
+    text_reduce_only = bool(getattr(args, "fate_x_text_reduce_only", True))
+    if fate_enabled and text_reduce_only and reduce_control:
+        raise ValueError(
+            "Inconsistent FATE-X settings: --fate_x_text_reduce_only true "
+            "cannot be combined with --fate_x_reduce_control true."
+        )
+    if fate_enabled and reduce_control and control_reducer not in {"per_frame_topk_merge", "temporal_ordered_topk"}:
         raise ValueError(
             "FATE-X control branch reduction must be temporal-order preserving. "
             "Use --fate_x_reduce_control false for the default dense CSP path, "
-            "or set --fate_x_control_reducer temporal_ordered_topk explicitly."
+            "or set --fate_x_control_reducer per_frame_topk_merge explicitly."
         )
