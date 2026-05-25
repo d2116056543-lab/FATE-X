@@ -38,6 +38,7 @@ from src.modeling.load_swin import get_swin_model, reload_pretrained_swin
 from src.modeling.load_bert import get_bert_model
 from src.solver import AdamW, WarmupLinearLR
 from fate_x.engine.fate_x_compat import validate_fate_x_mask_compatibility
+from fate_x.engine.lr_scaling import apply_lr_scaling_to_args
 
 from azureml.core.run import Run
 aml_run = Run.get_context()
@@ -267,13 +268,14 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
         
         # backward pass
         backward_now = iteration % args.gradient_accumulation_steps == 0
+        loss_for_backward = loss if args.mixed_precision_method == "deepspeed" else loss / float(args.gradient_accumulation_steps)
         if args.mixed_precision_method == "deepspeed":
             model.backward(loss)
         elif args.mixed_precision_method == "fairscale":
-            scaler.scale(loss).backward()
+            scaler.scale(loss_for_backward).backward()
         else:
             # apex
-            with amp.scale_loss(loss, optimizer, delay_unscale=not backward_now) as scaled_loss:
+            with amp.scale_loss(loss_for_backward, optimizer, delay_unscale=not backward_now) as scaled_loss:
                 scaled_loss.backward()
         if backward_now:
             global_step += 1
@@ -796,6 +798,7 @@ def check_arguments(args):
         args.reload_pretrained_swin = False
 
     validate_fate_x_mask_compatibility(args)
+    apply_lr_scaling_to_args(args)
 
     if args.learn_mask_enabled==True and args.attn_mask_type != 'learn_without_crossattn' and args.attn_mask_type != 'learn_with_swap_crossattn': 
         args.attn_mask_type = 'learn_vid_att'
@@ -866,6 +869,10 @@ def get_custom_args(base_config):
     parser.add_argument('--fate_x_reduce_control', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--fate_x_control_reducer', type=str, default='none', choices=['none', 'per_frame_topk_merge', 'temporal_ordered_topk'])
     parser.add_argument('--temporal_evidence_memory', type=str, default='none', choices=['none', 'queries'])
+    parser.add_argument('--reference_effective_batch', type=int, default=64)
+    parser.add_argument('--base_learning_rate_at_reference_batch', type=float, default=0.0002)
+    parser.add_argument('--auto_scale_lr', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--num_gpus_for_lr', type=int, default=1)
     parser.add_argument('--phrase_faithfulness_enabled', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--visualize_phrase_attention', type=str_to_bool, nargs='?', const=True, default=False)
     args = base_config.parse_args()
