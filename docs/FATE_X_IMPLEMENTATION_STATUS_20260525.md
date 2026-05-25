@@ -119,3 +119,76 @@ The FATE-X method code path is implemented and smoke-tested, but final paper-sty
 - caption/control metrics under baseline ADAPT and FATE-X flags
 - real generation-time phrase log-prob extraction
 - final phrase deletion/sufficiency table on val/test
+
+## 2026-05-25 Gap Closure Update
+
+The latest GPTPro audit identified two remaining FATE-X code-level gaps:
+
+- unsafe coexistence of ADAPT `learn_mask_enabled` and compressed FATE-X video tokens;
+- phrase faithfulness needed a decoder-token-logprob scoring entrypoint, not only token-score fallback fields.
+
+Both are now implemented and verified.
+
+### New/Updated Code
+
+- `fate_x/engine/fate_x_compat.py`
+  - Adds `validate_fate_x_mask_compatibility(args)`.
+  - Raises `ValueError` when `fate_x_enabled=True`, `video_token_reducer != none`, and `learn_mask_enabled=True`.
+
+- `src/tasks/run_adapt.py`
+  - Calls the compatibility guard in argument checking before training starts.
+
+- `fate_x/engine/generate_decoder_phrase_scores.py`
+  - Reads generated text, decoder tokens, and token log-probs.
+  - Supports optional top-k masked, evidence-only, and random-masked token log-prob fields.
+  - Produces phrase-level `original_score`, `topk_masked_score`, `evidence_only_score`, and `random_masked_score`.
+  - Summarizes phrase deletion, sufficiency, and random deletion scores.
+
+- `tests/test_fate_x_forward_and_phrase_scores.py`
+  - Adds compatibility-guard test.
+  - Adds decoder phrase scoring test.
+
+### Verification
+
+Targeted tests:
+
+```text
+tests/test_fate_x_forward_and_phrase_scores.py: 4 passed
+```
+
+Broader selected tests:
+
+```text
+10 passed
+```
+
+Real script smoke:
+
+```text
+decoder phrase scorer:
+  count = 1
+  with_phrase_hit = 1
+  phrase_records = 3
+  faithfulness_available = true
+  phrase_deletion_score = 0.80
+  phrase_sufficiency_score = -0.1333
+  random_deletion_score = 0.2167
+
+forward hook smoke:
+  input_shape = [1, 24, 16]
+  output_shape = [1, 16, 16]
+  attention_mask_shape = [1, 20, 20]
+  original_tokens = 24
+  reduced_tokens = 14
+  event_tokens = 2
+  has_provenance = true
+```
+
+Fresh GitHub clone compile:
+
+```text
+FATE-X commit 242bd0447c34eab2cbbe24ba49dd6e652d62981b
+py_compile PASS
+```
+
+Boundary remains unchanged: full checkpoint-dependent ADAPT/FATE-X phrase faithfulness still requires real decoder inference outputs from a trained checkpoint.
