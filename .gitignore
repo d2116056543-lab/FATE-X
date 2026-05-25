@@ -156,3 +156,4 @@ src/**/__pycache__/
 src/**/*.pyc
 
 .background_runs/
+docs/FATE_*_IMPLEMENTATION_STATUS_*.md
