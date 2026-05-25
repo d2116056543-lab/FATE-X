@@ -7,13 +7,27 @@ from typing import Any
 
 
 DEFAULT_PHRASE_ONTOLOGY: dict[str, dict[str, Any]] = {
-    "traffic_light": {
-        "priority": 100,
+    "traffic_light_red": {
+        "priority": 120,
         "include": [
-            r"\btraffic\s+light(s)?\b",
-            r"\b(red|green|yellow)\s+light(s)?\b",
-            r"\blight\s+(turns|turned|is)\s+(red|green|yellow)\b",
+            r"\btraffic\s+light(s)?\s+(is|turns|turned|becomes)?\s*red\b",
+            r"\bred\s+traffic\s+light(s)?\b",
+            r"\bred\s+light(s)?\b",
         ],
+        "exclude": [r"\blight\s+traffic\b", r"\bstreet\s+light\b"],
+    },
+    "traffic_light_green": {
+        "priority": 118,
+        "include": [
+            r"\btraffic\s+light(s)?\s+(is|turns|turned|becomes)?\s*green\b",
+            r"\bgreen\s+traffic\s+light(s)?\b",
+            r"\bgreen\s+light(s)?\b",
+        ],
+        "exclude": [r"\blight\s+traffic\b", r"\bstreet\s+light\b"],
+    },
+    "traffic_light": {
+        "priority": 90,
+        "include": [r"\btraffic\s+light(s)?\b"],
         "exclude": [r"\blight\s+traffic\b", r"\bstreet\s+light\b"],
     },
     "pedestrian": {
@@ -30,14 +44,24 @@ DEFAULT_PHRASE_ONTOLOGY: dict[str, dict[str, Any]] = {
         ],
         "exclude": [],
     },
+    "parked_vehicle": {
+        "priority": 72,
+        "include": [r"\bparked\s+(car|vehicle|truck|bus|cars|vehicles)\b"],
+        "exclude": [],
+    },
     "car_vehicle": {
         "priority": 40,
         "include": [r"\bcar(s)?\b", r"\bvehicle(s)?\b", r"\btruck(s)?\b", r"\bbus(es)?\b"],
         "exclude": [],
     },
-    "lane_turn": {
+    "lane_turn_left": {
         "priority": 70,
-        "include": [r"\bturn(s|ing)?\s+(left|right)\b", r"\b(left|right)\s+lane\b", r"\bmerge(s|ing)?\b"],
+        "include": [r"\bturn(s|ing)?\s+left\b", r"\bleft\s+lane\b", r"\bmerge(s|ing)?\s+left\b"],
+        "exclude": [],
+    },
+    "lane_turn_right": {
+        "priority": 70,
+        "include": [r"\bturn(s|ing)?\s+right\b", r"\bright\s+lane\b", r"\bmerge(s|ing)?\s+right\b"],
         "exclude": [],
     },
     "clear_road": {
@@ -46,7 +70,7 @@ DEFAULT_PHRASE_ONTOLOGY: dict[str, dict[str, Any]] = {
         "exclude": [],
     },
     "stop_sign": {"priority": 75, "include": [r"\bstop\s+sign(s)?\b"], "exclude": []},
-    "obstacle": {"priority": 50, "include": [r"\bobstacle(s)?\b", r"\bblocking\b", r"\bparked\b"], "exclude": []},
+    "obstacle": {"priority": 50, "include": [r"\bobstacle(s)?\b", r"\bblocking\b"], "exclude": []},
 }
 
 
@@ -73,14 +97,19 @@ class PhraseHit:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "phrase_type": self.concept,
             "concept": self.concept,
+            "text": self.phrase,
             "phrase": self.phrase,
             "matched_text": self.matched_text,
             "start": self.start,
             "end": self.end,
             "char_span": list(self.char_span),
             "token_span": list(self.token_span) if self.token_span is not None else None,
+            "segment": self.source_segment,
             "source_segment": self.source_segment,
+            "confidence": float(self.priority),
+            "rule_name": self.concept,
             "priority": self.priority,
         }
 

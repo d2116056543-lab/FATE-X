@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from fate_x.engine.generate_decoder_phrase_scores import score_decoder_phrase_rows
+from fate_x.engine.write_eval_artifacts import write_fate_x_eval_artifacts
 
 
 MASKS = {
@@ -96,11 +97,13 @@ class JsonlReplayModel:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate model-in-loop BDD-X phrase perturbation scores.")
+    ap.add_argument("--mode", choices=["replay", "live"], default="replay")
     ap.add_argument("--eval_model_dir", default="", help="ADAPT/FATE-X checkpoint directory. Real wrapper integration is required for live inference.")
     ap.add_argument("--data_dir", default="")
     ap.add_argument("--val_yaml", default="")
     ap.add_argument("--output_jsonl", required=True)
     ap.add_argument("--summary_json", default="")
+    ap.add_argument("--artifact_output_dir", default="", help="Optional FATE-X eval artifact directory for epoch_000 schema output.")
     ap.add_argument("--max_samples", type=int, default=32)
     ap.add_argument("--beam_size", type=int, default=1)
     ap.add_argument("--mask_strategy", choices=["zero", "background", "mask_token"], default="zero")
@@ -109,9 +112,15 @@ def main() -> None:
     ap.add_argument("--replay_decoder_jsonl", default="", help="Schema smoke path with precomputed live-model rows.")
     args = ap.parse_args()
 
+    if args.mode == "live":
+        raise NotImplementedError(
+            "live checkpoint-dependent phrase faithfulness requires an ADAPT/FATE-X "
+            "decoder wrapper that exposes generate_with_logprobs(sample, mask=...). "
+            "Replay mode is only a schema smoke and is not a live faithfulness claim."
+        )
     if not args.replay_decoder_jsonl:
         raise SystemExit(
-            "Live ADAPT checkpoint phrase scoring needs a repository-specific decoder wrapper. "
+            "Replay mode needs --replay_decoder_jsonl. Live ADAPT checkpoint phrase scoring needs a repository-specific decoder wrapper. "
             "Use --replay_decoder_jsonl for schema smoke, or implement generate_with_logprobs "
             "around the trained ADAPT/FATE-X checkpoint before claiming checkpoint-dependent faithfulness."
         )
@@ -129,7 +138,9 @@ def main() -> None:
     if args.summary_json:
         _, summary = score_decoder_phrase_rows(scored)
         Path(args.summary_json).write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(json.dumps({"event": "fate_x_phrase_model_loop_rows", "rows": len(scored), "mode": "replay"}, indent=2))
+    if args.artifact_output_dir:
+        write_fate_x_eval_artifacts(args.artifact_output_dir, 0, scored, run_manifest={"repo_name": "FATE-X", "mode": args.mode, "is_smoke": True})
+    print(json.dumps({"event": "fate_x_phrase_model_loop_rows", "rows": len(scored), "mode": args.mode}, indent=2))
 
 
 if __name__ == "__main__":

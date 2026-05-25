@@ -1,14 +1,35 @@
-traffic_light:
-  priority: 100
+traffic_light_red:
+  priority: 120
   include:
-    - "\\btraffic\\s+light(s)?\\b"
-    - "\\b(red|green|yellow)\\s+light(s)?\\b"
-    - "\\blight\\s+(turns|turned|is)\\s+(red|green|yellow)\\b"
+    - "\\btraffic\\s+light(s)?\\s+(is|turns|turned|becomes)?\\s*red\\b"
+    - "\\bred\\s+traffic\\s+light(s)?\\b"
+    - "\\bred\\s+light(s)?\\b"
   exclude:
     - "\\blight\\s+traffic\\b"
     - "\\bstreet\\s+light\\b"
-pedestrian:
+traffic_light_green:
+  priority: 118
+  include:
+    - "\\btraffic\\s+light(s)?\\s+(is|turns|turned|becomes)?\\s*green\\b"
+    - "\\bgreen\\s+traffic\\s+light(s)?\\b"
+    - "\\bgreen\\s+light(s)?\\b"
+  exclude:
+    - "\\blight\\s+traffic\\b"
+    - "\\bstreet\\s+light\\b"
+traffic_light:
   priority: 90
+  include:
+    - "\\btraffic\\s+light(s)?\\b"
+  exclude:
+    - "\\blight\\s+traffic\\b"
+    - "\\bstreet\\s+light\\b"
+stop_sign:
+  priority: 100
+  include:
+    - "\\bstop\\s+sign(s)?\\b"
+  exclude: []
+pedestrian:
+  priority: 95
   include:
     - "\\bpedestrian(s)?\\b"
     - "\\bperson\\b"
@@ -21,20 +42,24 @@ front_vehicle:
     - "\\bstopped\\s+(car|vehicle|truck|bus|cars|vehicles)\\b"
     - "\\b(cars|vehicles)\\s+are\\s+stopped\\s+ahead\\b"
   exclude: []
-car_vehicle:
-  priority: 40
+parked_vehicle:
+  priority: 72
   include:
-    - "\\bcar(s)?\\b"
-    - "\\bvehicle(s)?\\b"
-    - "\\btruck(s)?\\b"
-    - "\\bbus(es)?\\b"
+    - "\\bparked\\s+(car|vehicle|truck|bus|cars|vehicles)\\b"
   exclude: []
-lane_turn:
+lane_turn_left:
   priority: 70
   include:
-    - "\\bturn(s|ing)?\\s+(left|right)\\b"
-    - "\\b(left|right)\\s+lane\\b"
-    - "\\bmerge(s|ing)?\\b"
+    - "\\bturn(s|ing)?\\s+left\\b"
+    - "\\bleft\\s+lane\\b"
+    - "\\bmerge(s|ing)?\\s+left\\b"
+  exclude: []
+lane_turn_right:
+  priority: 70
+  include:
+    - "\\bturn(s|ing)?\\s+right\\b"
+    - "\\bright\\s+lane\\b"
+    - "\\bmerge(s|ing)?\\s+right\\b"
   exclude: []
 clear_road:
   priority: 60
@@ -43,15 +68,9 @@ clear_road:
     - "\\broad\\s+is\\s+clear\\b"
     - "\\bno\\s+(cars|vehicles|traffic)\\b"
   exclude: []
-stop_sign:
-  priority: 75
-  include:
-    - "\\bstop\\s+sign(s)?\\b"
-  exclude: []
 obstacle:
   priority: 50
   include:
     - "\\bobstacle(s)?\\b"
     - "\\bblocking\\b"
-    - "\\bparked\\b"
   exclude: []

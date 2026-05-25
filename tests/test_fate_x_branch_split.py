@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from argparse import Namespace
 
+import pytest
+
+from fate_x.engine.fate_x_compat import validate_fate_x_mask_compatibility
 from fate_x.engine.smoke_fate_x_forward import run_smoke
 
 
@@ -28,3 +31,17 @@ def test_text_branch_reduces_tokens_control_branch_stays_dense():
     assert result["text_visual_tokens"] < 32
     assert result["control_visual_tokens"] == 32
     assert result["control_branch_dense"] is True
+    assert result["fate_x_text_reduce_only"] is True
+    assert result["fate_x_reduce_control"] is False
+
+
+def test_reduce_control_requires_temporal_order_preserving_reducer():
+    args = Namespace(
+        fate_x_enabled=True,
+        video_token_reducer="topk_merge",
+        fate_x_reduce_control=True,
+        fate_x_control_reducer="none",
+        learn_mask_enabled=False,
+    )
+    with pytest.raises(ValueError):
+        validate_fate_x_mask_compatibility(args)

@@ -78,6 +78,8 @@ def run_smoke(args: argparse.Namespace) -> dict:
         "text_visual_tokens": int(out.shape[1]),
         "control_visual_tokens": int(control_tokens.shape[1]),
         "control_branch_dense": bool(control_tokens.shape[1] == dense_tokens.shape[1]),
+        "fate_x_text_reduce_only": bool(getattr(model, "fate_x_text_reduce_only", True)),
+        "fate_x_reduce_control": bool(getattr(model, "fate_x_reduce_control", False)),
     }
     expected_total = text_len + out.shape[1]
     if kwargs["attention_mask"].shape[-1] != expected_total:

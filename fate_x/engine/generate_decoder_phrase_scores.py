@@ -127,11 +127,18 @@ def score_decoder_phrase_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str
             if not indices:
                 continue
             item = {
+                "phrase_type": hit.concept,
                 "concept": hit.concept,
+                "text": hit.phrase,
                 "phrase": hit.phrase,
+                "phrase_text": hit.phrase,
                 "start": hit.start,
                 "end": hit.end,
+                "char_span": [hit.start, hit.end],
+                "phrase_token_span": [min(indices), max(indices) + 1],
                 "token_indices": indices,
+                "evidence_token_indices": list(indices),
+                "provenance_available": bool(row.get("provenance") is not None),
                 "original_score": _score_span(token_logprobs, indices),
             }
             if "topk_masked_token_logprobs" in row:
@@ -140,10 +147,25 @@ def score_decoder_phrase_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str
                 item["evidence_only_score"] = _score_span(row["evidence_only_token_logprobs"], indices)
             if "random_masked_token_logprobs" in row:
                 item["random_masked_score"] = _score_span(row["random_masked_token_logprobs"], indices)
+            if _finite(item.get("original_score")) and _finite(item.get("topk_masked_score")):
+                item["deletion_score"] = float(item["original_score"]) - float(item["topk_masked_score"])
+            if _finite(item.get("evidence_only_score")):
+                item["sufficiency_score"] = float(item["evidence_only_score"])
+            if _finite(item.get("original_score")) and _finite(item.get("random_masked_score")):
+                item["random_deletion_score"] = float(item["original_score"]) - float(item["random_masked_score"])
             phrase_items.append(item)
         out = dict(row)
         out["phrase_hits"] = [
-            {"concept": x["concept"], "phrase": x["phrase"], "start": x["start"], "end": x["end"]}
+            {
+                "phrase_type": x["phrase_type"],
+                "concept": x["concept"],
+                "text": x["text"],
+                "phrase": x["phrase"],
+                "char_span": x["char_span"],
+                "token_span": x["phrase_token_span"],
+                "segment": "full",
+                "confidence": None,
+            }
             for x in phrase_items
         ]
         out["phrase_hit_count"] = len(phrase_items)
