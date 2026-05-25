@@ -25,4 +25,4 @@ def test_phrase_hits():
     hits = find_phrase_hits("The car stops because the traffic light is red.")
     concepts = {h.concept for h in hits}
     assert "car_vehicle" in concepts
-    assert "traffic_light" in concepts
+    assert "traffic_light_red" in concepts
