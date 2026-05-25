@@ -37,6 +37,7 @@ from src.modeling.multitask_e2e_vid_swin_bert import MultitaskVideoTransformer
 from src.modeling.load_swin import get_swin_model, reload_pretrained_swin
 from src.modeling.load_bert import get_bert_model
 from src.solver import AdamW, WarmupLinearLR
+from fate_x.engine.fate_x_compat import validate_fate_x_mask_compatibility
 
 from azureml.core.run import Run
 aml_run = Run.get_context()
@@ -793,6 +794,8 @@ def check_arguments(args):
     if not len(args.pretrained_checkpoint) and args.reload_pretrained_swin:
         logger.info("No pretrained_checkpoint to be loaded, disable --reload_pretrained_swin")
         args.reload_pretrained_swin = False
+
+    validate_fate_x_mask_compatibility(args)
 
     if args.learn_mask_enabled==True and args.attn_mask_type != 'learn_without_crossattn' and args.attn_mask_type != 'learn_with_swap_crossattn': 
         args.attn_mask_type = 'learn_vid_att'
