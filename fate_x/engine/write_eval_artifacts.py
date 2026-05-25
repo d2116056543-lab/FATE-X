@@ -66,7 +66,16 @@ def write_fate_x_eval_artifacts(
         predictions.append(pred)
         for hit in row.get("phrase_hits") or []:
             phrase_hits.append({"sample_id": pred["sample_id"], **hit})
-        for score in row.get("phrase_scores") or row.get("phrase_faithfulness", {}).get("phrases", []) or []:
+        faithfulness = row.get("phrase_scores")
+        if faithfulness is None:
+            raw_faith = row.get("phrase_faithfulness")
+            if isinstance(raw_faith, dict):
+                faithfulness = raw_faith.get("phrases", [])
+            elif isinstance(raw_faith, list):
+                faithfulness = raw_faith
+            else:
+                faithfulness = []
+        for score in faithfulness or []:
             phrase_scores.append({"sample_id": pred["sample_id"], **score})
         if row.get("token_stats"):
             token_stats.append({"sample_id": pred["sample_id"], **row["token_stats"]})
