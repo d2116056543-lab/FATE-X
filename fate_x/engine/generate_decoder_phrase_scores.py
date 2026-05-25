@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from fate_x.explain.phrase_attribution import find_phrase_hits
-from fate_x.engine.eval_phrase_faithfulness import summarize_rows
 
 
 def _token_offsets_from_tokens(text: str, tokens: list[str]) -> list[tuple[int, int]]:
@@ -40,6 +39,64 @@ def _mean(values: list[float]) -> float:
 def _score_span(logprobs: list[float], indices: list[int]) -> float:
     usable = [float(logprobs[i]) for i in indices if 0 <= i < len(logprobs)]
     return _mean(usable) if usable else float("nan")
+
+
+def _finite(value: Any) -> bool:
+    try:
+        v = float(value)
+    except Exception:
+        return False
+    return v == v and v not in {float("inf"), float("-inf")}
+
+
+def summarize_decoder_phrase_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize decoder-derived phrase deletion/sufficiency scores.
+
+    This intentionally lives here instead of depending on
+    eval_phrase_faithfulness.py because that evaluator accepts several legacy
+    record schemas. The decoder path has a stricter schema based on per-token
+    log-probability perturbations.
+    """
+    phrase_records: list[dict[str, Any]] = []
+    with_hits = 0
+    for row in rows:
+        items = row.get("phrase_faithfulness") or []
+        if items:
+            with_hits += 1
+        for item in items:
+            phrase_records.append(item)
+
+    deletion: list[float] = []
+    sufficiency: list[float] = []
+    random_drop: list[float] = []
+    usable = 0
+    for item in phrase_records:
+        original = item.get("original_score")
+        if not _finite(original):
+            continue
+        has_metric = False
+        if _finite(item.get("topk_masked_score")):
+            deletion.append(float(original) - float(item["topk_masked_score"]))
+            has_metric = True
+        if _finite(item.get("evidence_only_score")):
+            sufficiency.append(float(item["evidence_only_score"]))
+            has_metric = True
+        if _finite(item.get("random_masked_score")):
+            random_drop.append(float(original) - float(item["random_masked_score"]))
+            has_metric = True
+        if has_metric:
+            usable += 1
+
+    return {
+        "count": len(rows),
+        "with_phrase_hit": with_hits,
+        "phrase_records": len(phrase_records),
+        "usable_phrase_records": usable,
+        "faithfulness_available": usable > 0,
+        "phrase_deletion_score": _mean(deletion) if deletion else None,
+        "phrase_sufficiency_score": _mean(sufficiency) if sufficiency else None,
+        "random_deletion_score": _mean(random_drop) if random_drop else None,
+    }
 
 
 def score_decoder_phrase_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -92,7 +149,7 @@ def score_decoder_phrase_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str
         out["phrase_hit_count"] = len(phrase_items)
         out["phrase_faithfulness"] = phrase_items
         scored_rows.append(out)
-    return scored_rows, summarize_rows(scored_rows)
+    return scored_rows, summarize_decoder_phrase_rows(scored_rows)
 
 
 def main() -> None:
