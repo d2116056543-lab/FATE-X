@@ -1,0 +1,6 @@
+stage: X-2
+description: Event-query memory only, no token compression.
+fate_x_enabled: true
+video_token_reducer: none
+temporal_evidence_memory: queries
+fate_x_text_reduce_only: true

@@ -65,7 +65,7 @@ def generate_phrase_score_rows(predictions: list[dict[str, Any]], token_scores: 
     for i, row in enumerate(predictions):
         rec = dict(row)
         text = rec.get("prediction") or rec.get("caption") or rec.get("text") or ""
-        hits = [h.__dict__ for h in find_phrase_hits(text)]
+        hits = [h.to_dict() for h in find_phrase_hits(text)]
         rec["phrase_hits"] = hits
         rec["phrase_hit_count"] = len(hits)
         generated = _scores_from_token_table(rec, token_scores, i, topk_ratio)

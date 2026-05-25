@@ -1,0 +1,5 @@
+stage: X-1
+description: FATE-X identity hook with reducer and memory disabled.
+fate_x_enabled: true
+video_token_reducer: none
+temporal_evidence_memory: none

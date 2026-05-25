@@ -41,7 +41,7 @@ def main() -> None:
             continue
         rec = json.loads(line)
         text = rec.get("prediction") or rec.get("caption") or rec.get("text") or ""
-        hits = [h.__dict__ for h in find_phrase_hits(text)]
+        hits = [h.to_dict() for h in find_phrase_hits(text)]
         rec["phrase_hits"] = hits
         rec["phrase_hit_count"] = len(hits)
         rec_phrase_records = _phrase_records_from_score_fields(rec, hits)

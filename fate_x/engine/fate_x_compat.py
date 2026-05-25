@@ -19,3 +19,11 @@ def validate_fate_x_mask_compatibility(args) -> None:
             "learn_mask_enabled. Run FATE-X with --learn_mask_enabled false "
             "and --loss_sparse_w 0, or implement a compressed learned mask."
         )
+    reduce_control = bool(getattr(args, "fate_x_reduce_control", False))
+    control_reducer = str(getattr(args, "fate_x_control_reducer", "none"))
+    if fate_enabled and reduce_control and control_reducer not in {"temporal_ordered_topk"}:
+        raise ValueError(
+            "FATE-X control branch reduction must be temporal-order preserving. "
+            "Use --fate_x_reduce_control false for the default dense CSP path, "
+            "or set --fate_x_control_reducer temporal_ordered_topk explicitly."
+        )

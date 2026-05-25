@@ -1,0 +1,5 @@
+stage: X-5
+description: Phrase faithfulness training after model-in-loop scoring smoke.
+phrase_faithfulness_enabled: true
+loss_weight: 0.01
+phrase_positive_only: true

@@ -1,0 +1,5 @@
+stage: X-0
+description: ADAPT baseline eval; FATE-X disabled.
+fate_x_enabled: false
+video_token_reducer: none
+temporal_evidence_memory: none

@@ -1,0 +1,57 @@
+traffic_light:
+  priority: 100
+  include:
+    - "\\btraffic\\s+light(s)?\\b"
+    - "\\b(red|green|yellow)\\s+light(s)?\\b"
+    - "\\blight\\s+(turns|turned|is)\\s+(red|green|yellow)\\b"
+  exclude:
+    - "\\blight\\s+traffic\\b"
+    - "\\bstreet\\s+light\\b"
+pedestrian:
+  priority: 90
+  include:
+    - "\\bpedestrian(s)?\\b"
+    - "\\bperson\\b"
+    - "\\bpeople\\s+(crossing|walking)\\b"
+  exclude: []
+front_vehicle:
+  priority: 80
+  include:
+    - "\\b(car|vehicle|truck|bus|cars|vehicles)\\s+(ahead|in front|stopped ahead)\\b"
+    - "\\bstopped\\s+(car|vehicle|truck|bus|cars|vehicles)\\b"
+    - "\\b(cars|vehicles)\\s+are\\s+stopped\\s+ahead\\b"
+  exclude: []
+car_vehicle:
+  priority: 40
+  include:
+    - "\\bcar(s)?\\b"
+    - "\\bvehicle(s)?\\b"
+    - "\\btruck(s)?\\b"
+    - "\\bbus(es)?\\b"
+  exclude: []
+lane_turn:
+  priority: 70
+  include:
+    - "\\bturn(s|ing)?\\s+(left|right)\\b"
+    - "\\b(left|right)\\s+lane\\b"
+    - "\\bmerge(s|ing)?\\b"
+  exclude: []
+clear_road:
+  priority: 60
+  include:
+    - "\\btraffic\\s+is\\s+clear\\b"
+    - "\\broad\\s+is\\s+clear\\b"
+    - "\\bno\\s+(cars|vehicles|traffic)\\b"
+  exclude: []
+stop_sign:
+  priority: 75
+  include:
+    - "\\bstop\\s+sign(s)?\\b"
+  exclude: []
+obstacle:
+  priority: 50
+  include:
+    - "\\bobstacle(s)?\\b"
+    - "\\bblocking\\b"
+    - "\\bparked\\b"
+  exclude: []

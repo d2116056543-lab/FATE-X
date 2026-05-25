@@ -1,0 +1,6 @@
+stage: X-4
+description: Checkpoint-dependent phrase score generation; no training loss.
+engine: fate_x.engine.generate_decoder_phrase_scores_from_model
+beam_size: 1
+mask_strategy: zero
+topk_ratio: 0.10

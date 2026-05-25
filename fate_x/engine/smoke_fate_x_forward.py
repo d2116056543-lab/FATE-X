@@ -39,6 +39,9 @@ def build_shell_model(args: argparse.Namespace) -> MultitaskVideoTransformer:
     model.fate_x_enabled = True
     model.video_token_reducer = args.video_token_reducer
     model.temporal_evidence_memory = args.temporal_evidence_memory
+    model.fate_x_text_reduce_only = getattr(args, "fate_x_text_reduce_only", True)
+    model.fate_x_reduce_control = getattr(args, "fate_x_reduce_control", False)
+    model.fate_x_control_reducer = getattr(args, "fate_x_control_reducer", "none")
     model.fate_x_last_stats = {}
     model.fate_x_reducer = None if args.video_token_reducer == "none" else VideoTokenReducer(
         args.dim,
@@ -46,6 +49,10 @@ def build_shell_model(args: argparse.Namespace) -> MultitaskVideoTransformer:
         num_summary_tokens=args.num_summary_tokens,
         min_tokens=args.min_tokens,
         mode=args.video_token_reducer,
+        temporal_tokens=getattr(args, "temporal_tokens", None),
+        spatial_tokens_per_frame=getattr(args, "spatial_tokens_per_frame", None),
+        min_tokens_per_frame=getattr(args, "min_tokens_per_frame", 1),
+        summary_mode=getattr(args, "summary_mode", "cluster"),
     )
     model.fate_x_memory = None if args.temporal_evidence_memory == "none" else TemporalEvidenceMemory(args.dim, event_names=[f"event_{i}" for i in range(args.num_events)])
     return model
@@ -58,13 +65,19 @@ def run_smoke(args: argparse.Namespace) -> dict:
     text_len = args.text_len
     attention_mask = torch.ones(args.batch_size, text_len + args.max_img_seq_length, text_len + args.max_img_seq_length)
     kwargs = {"attention_mask": attention_mask}
+    dense_tokens = tokens
     out = model._apply_fate_x_tokens(tokens, kwargs)
+    control_tokens = dense_tokens if getattr(model, "fate_x_text_reduce_only", True) and not getattr(model, "fate_x_reduce_control", False) else out
     result = {
         "input_shape": list(tokens.shape),
         "output_shape": list(out.shape),
         "attention_mask_shape": list(kwargs["attention_mask"].shape),
         "token_stats": model.fate_x_last_stats,
         "has_provenance": getattr(model, "fate_x_last_provenance", None) is not None,
+        "dense_visual_tokens": int(dense_tokens.shape[1]),
+        "text_visual_tokens": int(out.shape[1]),
+        "control_visual_tokens": int(control_tokens.shape[1]),
+        "control_branch_dense": bool(control_tokens.shape[1] == dense_tokens.shape[1]),
     }
     expected_total = text_len + out.shape[1]
     if kwargs["attention_mask"].shape[-1] != expected_total:
@@ -75,7 +88,8 @@ def run_smoke(args: argparse.Namespace) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Smoke-test the real ADAPT FATE-X token hook and attention-mask resize path.")
     ap.add_argument("--output", required=True)
-    ap.add_argument("--video_token_reducer", choices=["none", "topk_merge", "merge"], default="topk_merge")
+    ap.add_argument("--fate_x_enabled", action="store_true", default=False)
+    ap.add_argument("--video_token_reducer", choices=["none", "topk_merge", "merge", "per_frame_topk_merge"], default="topk_merge")
     ap.add_argument("--temporal_evidence_memory", choices=["none", "queries"], default="queries")
     ap.add_argument("--batch_size", type=int, default=2)
     ap.add_argument("--num_tokens", type=int, default=128)
@@ -85,6 +99,13 @@ def main() -> None:
     ap.add_argument("--keep_ratio", type=float, default=0.5)
     ap.add_argument("--num_summary_tokens", type=int, default=8)
     ap.add_argument("--min_tokens", type=int, default=16)
+    ap.add_argument("--min_tokens_per_frame", type=int, default=1)
+    ap.add_argument("--temporal_tokens", type=int, default=0)
+    ap.add_argument("--spatial_tokens_per_frame", type=int, default=0)
+    ap.add_argument("--summary_mode", choices=["global_mean", "cluster", "per_frame_cluster"], default="cluster")
+    ap.add_argument("--fate_x_text_reduce_only", type=lambda x: str(x).lower() not in {"0", "false", "no"}, default=True)
+    ap.add_argument("--fate_x_reduce_control", action="store_true", default=False)
+    ap.add_argument("--fate_x_control_reducer", choices=["none", "temporal_ordered_topk"], default="none")
     ap.add_argument("--num_events", type=int, default=8)
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
