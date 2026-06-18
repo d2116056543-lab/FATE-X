@@ -11,3 +11,15 @@ def test_sinkhorn_shapes_and_grad():
     assert torch.isfinite(out["transport"]).all()
     out["matched_transport"].sum().backward()
     assert m.proj.weight.grad is not None
+
+
+def test_sinkhorn_accepts_bfloat16_inputs_and_parameters():
+    m = LogSinkhornTransport(8, matching_dim=4).to(dtype=torch.bfloat16)
+    a = torch.randn(2, 9, 8, dtype=torch.bfloat16)
+    b = a.detach().clone() + (0.01 * torch.randn(2, 9, 8)).to(dtype=torch.bfloat16)
+
+    out = m(a, b)
+
+    assert out["transport"].shape == (2, 10, 10)
+    assert torch.isfinite(out["transport"]).all()
+    assert torch.isfinite(out["matched_transport"]).all()

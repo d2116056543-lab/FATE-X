@@ -5,6 +5,8 @@ from fate_x.models.video_token_reducer import VideoTokenReducer
 from fate_x.models.temporal_evidence_memory import TemporalEvidenceMemory
 from fate_x.models.flowtrace_pmt_model import FlowTracePMTModel
 from fate_x.models.token_pmt_adapter import TokenPMTAdapter
+from fate_x.losses.flowtrace_losses import FlowTraceLoss
+from fate_x.engine.backbone_output_utils import unpack_flowtrace_backbone_output
 from src.modeling.load_sensor_pred_head import get_sensor_pred_model
 
 class MultitaskVideoTransformer(torch.nn.Module):
@@ -72,14 +74,27 @@ class MultitaskVideoTransformer(torch.nn.Module):
         self.flowtrace_enabled = bool(getattr(args, 'flowtrace_enabled', False))
         self.flowtrace_encoder = None
         self.token_pmt_adapter = None
+        self.flowtrace_loss = None
+        self.fate_x_last_flowtrace_bundle = None
         if self.flowtrace_enabled:
             state_dim = int(getattr(args, 'flowtrace_state_dim', 256))
-            self.flowtrace_encoder = None  # lazy-init after first multiscale forward reveals dims
+            if hasattr(self.swin, "flowtrace_stage_dims"):
+                fine_dim, coarse_dim = self.swin.flowtrace_stage_dims(return_stages=(2, 3))
+            else:
+                fine_dim = int(getattr(self.swin.backbone, "num_features", self.latent_feat_size))
+                coarse_dim = int(getattr(self.swin.backbone, "num_features", self.latent_feat_size))
+            self.flowtrace_encoder = FlowTracePMTModel(
+                fine_dim=fine_dim,
+                coarse_dim=coarse_dim,
+                dense_dim=self.img_feature_dim,
+                state_dim=state_dim,
+            )
             self.token_pmt_adapter = TokenPMTAdapter(
                 hidden_dim=int(getattr(config, 'hidden_size', self.img_feature_dim)),
                 state_dim=state_dim,
                 rank=int(getattr(args, 'flowtrace_pmt_rank', 32)),
             )
+            self.flowtrace_loss = FlowTraceLoss(state_dim=state_dim)
             self.flowtrace_state_dim = state_dim
         self.compute_mask_on_the_fly = False # deprecated
         self.mask_prob = args.mask_prob
@@ -125,9 +140,9 @@ class MultitaskVideoTransformer(torch.nn.Module):
         images = images.permute(0, 2, 1, 3, 4)
         backbone_out = self.swin(images, return_stages=self.flowtrace_enabled)
         flowtrace_bundle = None
-        if self.flowtrace_enabled and isinstance(backbone_out, dict):
-            vid_feats = backbone_out.get('final_tokens', backbone_out.get('final'))
-            stages = backbone_out.get('stages', [])
+        self.fate_x_last_flowtrace_bundle = None
+        if self.flowtrace_enabled:
+            vid_feats, stages = unpack_flowtrace_backbone_output(backbone_out)
         else:
             vid_feats = backbone_out
             stages = []
@@ -143,16 +158,8 @@ class MultitaskVideoTransformer(torch.nn.Module):
         vid_feats_control = vid_feats_dense
         if self.flowtrace_enabled and len(stages) >= 2:
             fine_stage, coarse_stage = stages[-2], stages[-1]
-            fine_dim = int(fine_stage.shape[1])
-            coarse_dim = int(coarse_stage.shape[1])
-            if self.flowtrace_encoder is None:
-                self.flowtrace_encoder = FlowTracePMTModel(
-                    fine_dim=fine_dim,
-                    coarse_dim=coarse_dim,
-                    dense_dim=self.img_feature_dim,
-                    state_dim=self.flowtrace_state_dim,
-                ).to(vid_feats_dense.device)
             flowtrace_bundle = self.flowtrace_encoder(vid_feats_dense, fine_stage, coarse_stage)
+        self.fate_x_last_flowtrace_bundle = flowtrace_bundle
 
         text_kwargs = dict(kwargs)
         control_kwargs = dict(kwargs)
@@ -227,6 +234,19 @@ class MultitaskVideoTransformer(torch.nn.Module):
             sensor_outputs = self.sensor_pred_head(*args, **control_kwargs)
 
             outputs = outputs + sensor_outputs
+            if flowtrace_bundle is not None and self.flowtrace_loss is not None:
+                flowtrace_aux_loss, flowtrace_loss_logs = self.flowtrace_loss(
+                    flowtrace_bundle,
+                    control_prediction=sensor_outputs[1] if len(sensor_outputs) > 1 else None,
+                    control_target=control_kwargs.get('car_info'),
+                )
+                flowtrace_loss_logs = {
+                    "flowtrace_loss_components": {
+                        key: float(value.detach().cpu()) if torch.is_tensor(value) else value
+                        for key, value in flowtrace_loss_logs.items()
+                    }
+                }
+                outputs = outputs + (flowtrace_aux_loss, flowtrace_loss_logs)
 
             # sparse attention mask loss
             if self.learn_mask_enabled:

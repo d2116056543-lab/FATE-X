@@ -11,13 +11,22 @@ import json
 import time
 import datetime
 import shutil
+import glob
 import torch
 import torch.distributed as dist
 import gc
 import numpy as np
-import deepspeed
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+try:
+    import deepspeed
+except ImportError:  # Windows/single-GPU reproduction can run without DeepSpeed.
+    deepspeed = None
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as ApexDDP
+except ImportError:  # Apex is optional; fall back to native PyTorch training.
+    amp = None
+    ApexDDP = None
+from torch.nn.parallel import DistributedDataParallel as TorchDDP
 from tqdm import tqdm
 from src.configs.config import (basic_check_arguments, shared_configs, restore_training_settings)
 from src.datasets.vl_dataloader import make_data_loader
@@ -31,12 +40,13 @@ from src.utils.miscellaneous import (NoOp, mkdir, set_seed, str_to_bool,
                                     delete_tsv_files, concat_tsv_files)
 from src.utils.metric_logger import MetricLogger
 from src.utils.tsv_file_ops import tsv_writer, double_tsv_writer, reorder_tsv_keys
-from src.utils.deepspeed import get_deepspeed_config, fp32_to_fp16
+from src.utils.deepspeed import get_deepspeed_config, fp32_to_fp16, fp32_to_bf16
 from src.modeling.video_captioning_e2e_vid_swin_bert import VideoTransformer
 from src.modeling.multitask_e2e_vid_swin_bert import MultitaskVideoTransformer
 from src.modeling.load_swin import get_swin_model, reload_pretrained_swin
 from src.modeling.load_bert import get_bert_model
 from src.solver import AdamW, WarmupLinearLR
+from fate_x.engine.checkpoint_utils import filter_compatible_state_dict
 from fate_x.engine.fate_x_compat import validate_fate_x_mask_compatibility
 from fate_x.engine.lr_scaling import apply_lr_scaling_to_args
 
@@ -58,6 +68,245 @@ def save_repro_checkpoint(training_saver, args, tag, step, model, optimizer, met
     training_saver.save_model(checkpoint_dir, step, model, optimizer)
     with open(op.join(checkpoint_dir, 'repro_checkpoint_meta.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
+
+
+def load_compatible_state_dict(model, checkpoint, *, context: str):
+    """Load checkpoint tensors that match model keys and shapes.
+
+    This preserves official ADAPT initialization while allowing the official
+    1-signal basemodel to initialize a 2-signal course+speed training run.
+    """
+    filtered, skipped = filter_compatible_state_dict(model, checkpoint)
+    incompatible = {
+        k: v for k, v in skipped.items()
+        if v.get("reason") == "shape_mismatch"
+    }
+    if skipped:
+        logger.info(
+            f"{context}: loading {len(filtered)} compatible tensors; "
+            f"skipping {len(skipped)} incompatible/missing tensors."
+        )
+        for key, info in list(skipped.items())[:20]:
+            logger.info(f"{context}: skipped checkpoint key {key}: {info}")
+        if len(skipped) > 20:
+            logger.info(f"{context}: skipped checkpoint keys truncated at 20 of {len(skipped)}.")
+    if incompatible:
+        logger.info(f"{context}: shape mismatches were intentionally left randomly initialized.")
+    return model.load_state_dict(filtered, strict=False)
+
+
+def _unwrap_model(model):
+    return getattr(model, "module", model)
+
+
+def _collect_flowtrace_grad_norms(model):
+    """Collect gradient evidence for required FlowTrace trainable paths."""
+    root = _unwrap_model(model)
+    groups = {
+        "transport": ("flowtrace_encoder.tracks.transport", "flowtrace_encoder.transport"),
+        "track_queries": ("flowtrace_encoder.tracks.track_queries", "tracks.track_queries"),
+        "state_composer": ("flowtrace_encoder.composer",),
+        "reason_state_head": ("flowtrace_encoder.reason",),
+        "pmt": ("token_pmt_adapter",),
+    }
+    norms = {name: 0.0 for name in groups}
+    for param_name, param in root.named_parameters():
+        if param.grad is None:
+            continue
+        grad_norm = float(param.grad.detach().float().norm().cpu())
+        if not np.isfinite(grad_norm):
+            grad_norm = 0.0
+        for group_name, patterns in groups.items():
+            if any(pattern in param_name for pattern in patterns):
+                norms[group_name] += grad_norm
+    return norms
+
+
+def _update_flowtrace_smoke_evidence(path, payload):
+    """Merge evidence into the real-data smoke summary."""
+    if not path:
+        return
+    path = op.abspath(str(path))
+    os.makedirs(op.dirname(path), exist_ok=True)
+    data = {}
+    if op.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                data.update(existing)
+        except Exception:
+            data["previous_summary_unreadable"] = True
+    data.update(payload)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _safe_float(value, default=0.0):
+    try:
+        if torch.is_tensor(value):
+            value = value.detach().float().cpu()
+            if value.numel() == 0:
+                return default
+            value = value.mean().item()
+        out = float(value)
+        return out if np.isfinite(out) else default
+    except Exception:
+        return default
+
+
+def _all_finite(*values):
+    for value in values:
+        try:
+            tensor = value.detach().float() if torch.is_tensor(value) else torch.as_tensor(value).float()
+            if not bool(torch.isfinite(tensor).all().item()):
+                return False
+        except Exception:
+            return False
+    return True
+
+
+def _write_flowtrace_smoke_train_evidence(
+    args,
+    *,
+    img_keys,
+    inputs,
+    logits,
+    masked_ids,
+    loss,
+    model,
+    flowtrace_loss_components,
+):
+    evidence_path = getattr(args, "flowtrace_smoke_evidence", "")
+    if not evidence_path or not is_main_process():
+        return
+
+    evidence = {
+        "real_data_smoke": True,
+        "direct_image_training": True,
+        "feature_cache_enabled": False,
+        "token_cache_enabled": False,
+        "forward_backward": True,
+        "train_samples": int(getattr(args, "limited_samples", 0) or 0),
+        "batch_shapes": {
+            key: list(value.shape) for key, value in inputs.items() if torch.is_tensor(value)
+        },
+    }
+    evidence["grad_norms"] = _collect_flowtrace_grad_norms(model)
+    evidence["no_nan_inf"] = _all_finite(loss, logits)
+
+    token_logprobs = []
+    token_ids = []
+    if masked_ids.numel() > 0 and logits.numel() > 0:
+        target = masked_ids.to(logits.device).long()
+        log_probs = torch.log_softmax(logits.detach().float(), dim=-1)
+        gathered = log_probs.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+        token_logprobs = [float(x) for x in gathered[:32].detach().cpu().tolist()]
+        token_ids = [str(int(x)) for x in target[:32].detach().cpu().tolist()]
+    evidence["decoder_logprobs"] = bool(token_logprobs)
+    evidence["decoder_token_logprobs_head"] = token_logprobs
+
+    components = flowtrace_loss_components or {}
+    state_off_delta = _safe_float(components.get("intervention_state_off_delta"))
+    equal_mass_delta = _safe_float(components.get("intervention_equal_mass_delta"))
+    intervention_available = _safe_float(components.get("intervention_available")) > 0.5
+    evidence["state_off_intervention"] = intervention_available and state_off_delta > 0.0
+    evidence["random_equal_mass_intervention"] = intervention_available and equal_mass_delta >= 0.0
+    evidence["intervention_state_off_delta"] = state_off_delta
+    evidence["intervention_equal_mass_delta"] = equal_mass_delta
+
+    sample_id = str(img_keys[0] if img_keys else "real_smoke_0")
+    try:
+        from fate_x.engine.write_eval_artifacts import write_fate_x_eval_artifacts
+
+        epoch_dir = write_fate_x_eval_artifacts(
+            args.output_dir,
+            0,
+            [
+                {
+                    "sample_id": sample_id,
+                    "split": "train_smoke",
+                    "prediction": "teacher_forced_masked_tokens",
+                    "tokens": token_ids,
+                    "token_logprobs": token_logprobs,
+                    "token_stats": {"masked_token_count": int(masked_ids.numel())},
+                    "phrase_scores": [
+                        {
+                            "phrase": "flowtrace_smoke_real_batch",
+                            "deletion_score": state_off_delta,
+                            "sufficiency_score": equal_mass_delta,
+                        }
+                    ],
+                }
+            ],
+            run_manifest={
+                "source": "real_bddx_train_batch",
+                "feature_cache_enabled": False,
+                "token_cache_enabled": False,
+            },
+        )
+        evidence["artifact_schema"] = op.exists(op.join(str(epoch_dir), "predictions.jsonl"))
+        evidence["artifact_schema_dir"] = str(epoch_dir)
+    except Exception as exc:
+        evidence["artifact_schema"] = False
+        evidence["artifact_schema_error"] = repr(exc)
+
+    try:
+        from fate_x.explain.flowtrace_renderer import FlowTraceRenderer
+
+        bundle = getattr(_unwrap_model(model), "fate_x_last_flowtrace_bundle", None)
+        if bundle is None:
+            evidence["flowtrace_canvas"] = False
+            evidence["flowtrace_canvas_error"] = "missing_flowtrace_bundle"
+        else:
+            canvas = FlowTraceRenderer().render_canvas(
+                bundle,
+                op.join(args.output_dir, "flowtrace_smoke_visuals"),
+                sample_id.replace("/", "_").replace("\\", "_"),
+            )
+            evidence["flowtrace_canvas"] = bool(canvas.get("png"))
+            evidence["flowtrace_canvas_path"] = canvas.get("png")
+    except Exception as exc:
+        evidence["flowtrace_canvas"] = False
+        evidence["flowtrace_canvas_error"] = repr(exc)
+
+    _update_flowtrace_smoke_evidence(evidence_path, evidence)
+
+
+def _finalize_flowtrace_smoke_evidence(args):
+    evidence_path = getattr(args, "flowtrace_smoke_evidence", "")
+    if not evidence_path or not is_main_process():
+        return
+    eval_files = glob.glob(op.join(args.output_dir, "checkpoint-*", "*.eval.json"))
+    eval_files += glob.glob(op.join(args.output_dir, "*.eval.json"))
+    checkpoint_latest = op.exists(op.join(args.output_dir, "checkpoint_latest", "model.bin"))
+    _update_flowtrace_smoke_evidence(
+        evidence_path,
+        {
+            "eval_completed": bool(eval_files),
+            "eval_files": [op.normpath(path) for path in eval_files[:8]],
+            "eval_samples": int(getattr(args, "limited_eval_samples", 0) or 0),
+            "checkpoint_latest": bool(checkpoint_latest),
+        },
+    )
+
+
+def _flowtrace_train_step_limit(args):
+    try:
+        return max(0, int(getattr(args, "flowtrace_max_train_steps", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _reached_flowtrace_train_step_limit(args, global_step):
+    limit = _flowtrace_train_step_limit(args)
+    return limit > 0 and int(global_step) >= limit
+
+
+def _stack_signal_rows(gt_signals, pred_signals):
+    if not gt_signals or not pred_signals:
+        return None
+    return torch.stack(gt_signals, dim=0), torch.stack(pred_signals, dim=0)
 
 
 def maybe_load_repro_optimizer(args, optimizer):
@@ -145,6 +394,11 @@ def mixed_precision_init(args, model):
             optimizer, step_size=int(max_iter/2.0), gamma=0.1)
     
     if args.mixed_precision_method == "deepspeed":
+        if deepspeed is None:
+            raise RuntimeError(
+                "mixed_precision_method=deepspeed requires the deepspeed package. "
+                "Install deepspeed or use --mixed_precision_method apex for native single-GPU fallback."
+            )
         config = get_deepspeed_config(args)
         model, optimizer, _, _ = deepspeed.initialize(
             config_params=config,
@@ -161,13 +415,18 @@ def mixed_precision_init(args, model):
             reduce_buffer_size= 0 if args.fairscale_fp16 else 2 ** 23, # 2 ** 23 is the default value
             reduce_fp16=args.fairscale_fp16)
     else:
-        # opt_level is O0, Apex will run as fp32
-        model, optimizer = amp.initialize(
-            model, optimizer,
-            enabled=True,
-            opt_level=f'O{args.amp_opt_level}')
+        # opt_level O0 is fp32. If Apex is unavailable, run native PyTorch fp32.
+        if amp is not None:
+            model, optimizer = amp.initialize(
+                model, optimizer,
+                enabled=True,
+                opt_level=f'O{args.amp_opt_level}')
         if args.distributed: #
-            model = DDP(model)
+            if ApexDDP is not None:
+                model = ApexDDP(model)
+            else:
+                device_ids = [args.local_rank] if torch.cuda.is_available() else None
+                model = TorchDDP(model, device_ids=device_ids)
     return args, model, optimizer, scheduler
 
 def train(args, train_dataloader, val_dataloader, model, tokenizer, training_saver, optimizer, scheduler):
@@ -231,7 +490,10 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
             for k, v in inputs.items():
                 logger.info(f'{k} = {v.shape}')
 
-        if args.deepspeed_fp16:
+        if getattr(args, 'deepspeed_bf16', False):
+            # DeepSpeed does not autocast inputs.
+            inputs = fp32_to_bf16(inputs)
+        elif args.deepspeed_fp16:
             # deepspeed does not autocast inputs
             inputs = fp32_to_fp16(inputs)
 
@@ -240,12 +502,25 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                 outputs = model(**inputs)
         else:
             outputs = model(**inputs)
+        flowtrace_loss = None
+        flowtrace_loss_components = None
+        if (
+            isinstance(outputs, tuple)
+            and len(outputs) >= 2
+            and isinstance(outputs[-1], dict)
+            and "flowtrace_loss_components" in outputs[-1]
+        ):
+            flowtrace_loss_components = outputs[-1]["flowtrace_loss_components"]
+            flowtrace_loss = outputs[-2]
+            outputs = outputs[:-2]
         loss, logits = outputs[:2]
 
         if args.multitask:
             logits_sensor = outputs[-2]
             loss_sensor = outputs[-3]
             loss = loss + (loss_sensor * args.loss_sensor_w)
+        if flowtrace_loss is not None:
+            loss = loss + flowtrace_loss
         if args.learn_mask_enabled:
             loss_sparsity = outputs[-1]
             loss = loss + (loss_sparsity * args.loss_sparse_w)
@@ -261,6 +536,12 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
 
         if args.multitask:
             loss_dict['loss_sensor'] = loss_sensor
+        if flowtrace_loss is not None:
+            loss_dict['loss_flowtrace'] = flowtrace_loss.detach()
+            if flowtrace_loss_components:
+                for key, value in flowtrace_loss_components.items():
+                    if isinstance(value, (int, float)):
+                        loss_dict[f'flowtrace_{key}'] = float(value)
         meters.update(**loss_dict)
 
         running_loss(loss.item())
@@ -274,10 +555,22 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
         elif args.mixed_precision_method == "fairscale":
             scaler.scale(loss_for_backward).backward()
         else:
-            # apex
-            with amp.scale_loss(loss_for_backward, optimizer, delay_unscale=not backward_now) as scaled_loss:
-                scaled_loss.backward()
+            if amp is not None:
+                with amp.scale_loss(loss_for_backward, optimizer, delay_unscale=not backward_now) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss_for_backward.backward()
         if backward_now:
+            _write_flowtrace_smoke_train_evidence(
+                args,
+                img_keys=img_keys,
+                inputs=inputs,
+                logits=logits,
+                masked_ids=masked_ids,
+                loss=loss,
+                model=model,
+                flowtrace_loss_components=flowtrace_loss_components,
+            )
             global_step += 1
             TB_LOGGER.add_scalar('train/loss', running_loss.val, global_step)
             if args.multitask:
@@ -294,8 +587,13 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                 "train/ls_visBone", lr_VisBone, global_step)
             
             if args.max_grad_norm != -1:
+                grad_params = (
+                    amp.master_params(optimizer)
+                    if amp is not None and args.mixed_precision_method == "apex"
+                    else model.parameters()
+                )
                 grad_norm = torch.nn.utils.clip_grad_norm_(
-                    amp.master_params(optimizer), args.max_grad_norm)
+                    grad_params, args.max_grad_norm)
                 TB_LOGGER.add_scalar("train/grad_norm", grad_norm, global_step)
             TB_LOGGER.step()
             if args.mixed_precision_method == "deepspeed":
@@ -465,6 +763,13 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
             )
         end = time.time()
 
+        if _reached_flowtrace_train_step_limit(args, global_step):
+            logger.info(
+                f"FlowTrace hard smoke train-step limit reached: "
+                f"{global_step}/{_flowtrace_train_step_limit(args)}"
+            )
+            break
+
         if global_step >= max_global_step and (max_iter - iteration):
             logger.info(f'Missing {max_iter - iteration} iterations, early break')
             break
@@ -584,7 +889,10 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
                 tic = time.time()
                 # captions, logprobs
                 
-                if args.deepspeed_fp16:
+                if getattr(args, 'deepspeed_bf16', False):
+                    # deepspeed does not auto cast inputs.
+                    inputs = fp32_to_bf16(inputs)
+                elif args.deepspeed_fp16:
                     # deepspeed does not auto cast inputs.
                     inputs = fp32_to_fp16(inputs)
 
@@ -703,7 +1011,10 @@ def signal_evaluate(args, val_dataloader, model, tokenizer, output_dir):
                 }
 
                 
-                if args.deepspeed_fp16:
+                if getattr(args, 'deepspeed_bf16', False):
+                    # deepspeed does not auto cast inputs.
+                    inputs = fp32_to_bf16(inputs)
+                elif args.deepspeed_fp16:
                     # deepspeed does not auto cast inputs.
                     inputs = fp32_to_fp16(inputs)
 
@@ -720,9 +1031,26 @@ def signal_evaluate(args, val_dataloader, model, tokenizer, output_dir):
                         gt_signals.append(batch[5][b])
                         pred_signals.append(outputs[-2][b])
 
-        return torch.stack(gt_signals, dim=0), torch.stack(pred_signals, dim=0)
+        return _stack_signal_rows(gt_signals, pred_signals)
 
-    gt_signals, pred_signals = gen_rows()
+    signal_rows = gen_rows()
+    if signal_rows is None:
+        if is_main_process():
+            unavailable_file = op.splitext(predict_file)[0] + ".signal_unavailable.json"
+            with open(unavailable_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "available": False,
+                        "reason": "no_valid_control_signal_rows",
+                        "limited_eval_samples": int(getattr(args, "limited_eval_samples", 0) or 0),
+                    },
+                    f,
+                    indent=2,
+                )
+            logger.info(f"signal evaluation skipped: no valid control rows; wrote {unavailable_file}")
+        return None
+
+    gt_signals, pred_signals = signal_rows
 
     if world_size > 1:
         dist.barrier()
@@ -875,6 +1203,11 @@ def get_custom_args(base_config):
     parser.add_argument('--num_gpus_for_lr', type=int, default=1)
     parser.add_argument('--phrase_faithfulness_enabled', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--visualize_phrase_attention', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--flowtrace_enabled', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--flowtrace_state_dim', type=int, default=256)
+    parser.add_argument('--flowtrace_pmt_rank', type=int, default=32)
+    parser.add_argument('--flowtrace_smoke_evidence', type=str, default='')
+    parser.add_argument('--flowtrace_max_train_steps', type=int, default=0)
     args = base_config.parse_args()
     return args
 
@@ -903,9 +1236,13 @@ def main(args):
     if args.mixed_precision_method == "apex":
         fp16_trainning = f"apex O{args.amp_opt_level}"
     elif args.mixed_precision_method == "deepspeed":
-        amp_info = '' if args.deepspeed_fp16 else f'amp, {args.amp_opt_level}'
-        fp16_info = '' if not args.deepspeed_fp16 else f'fp16, {args.zero_opt_stage}'
-        fp16_trainning = f"deepspeed, {amp_info}{fp16_info}"
+        if getattr(args, 'deepspeed_bf16', False):
+            precision_info = f'bf16, {args.zero_opt_stage}'
+        elif args.deepspeed_fp16:
+            precision_info = f'fp16, {args.zero_opt_stage}'
+        else:
+            precision_info = f'amp, {args.amp_opt_level}'
+        fp16_trainning = f"deepspeed, {precision_info}"
     elif args.mixed_precision_method == "fairscale":
         assert args.distributed, "fairscale can only be used for distributed training"
         fp16_trainning = f"fairscale, fp16: {args.fairscale_fp16}, default zero_opt 2"
@@ -948,10 +1285,7 @@ def main(args):
         cpu_device = torch.device('cpu')
         pretrained_model = torch.load(args.resume_checkpoint, map_location=cpu_device)
 
-        if isinstance(pretrained_model, dict):
-            vl_transformer.load_state_dict(pretrained_model, strict=False)
-        else:
-            vl_transformer.load_state_dict(pretrained_model.state_dict(), strict=False)
+        load_compatible_state_dict(vl_transformer, pretrained_model, context="resume_checkpoint")
 
     elif args.do_train and args.pretrained_checkpoint != '':
         ckpt_path = args.pretrained_checkpoint+'model.bin'
@@ -961,10 +1295,7 @@ def main(args):
         pretrained_model = torch.load(ckpt_path, map_location=cpu_device)
 
         if args.learn_mask_enabled == False:
-            if isinstance(pretrained_model, dict):
-                vl_transformer.load_state_dict(pretrained_model, strict=False)
-            else:
-                vl_transformer.load_state_dict(pretrained_model.state_dict(), strict=False)
+            load_compatible_state_dict(vl_transformer, pretrained_model, context="pretrained_checkpoint")
 
         elif args.learn_mask_enabled == True:
             pretrained_mask_shape = pretrained_model['learn_vid_att.weight'].shape
@@ -975,10 +1306,7 @@ def main(args):
             if pretrained_mask_shape==init_mask_shape: 
                 # init using entire pre-trained ADAPT weights
                 if args.transfer_method==0:
-                    if isinstance(pretrained_model, dict):
-                        vl_transformer.load_state_dict(pretrained_model, strict=False)
-                    else:
-                        vl_transformer.load_state_dict(pretrained_model.state_dict(), strict=False)
+                    load_compatible_state_dict(vl_transformer, pretrained_model, context="pretrained_checkpoint_mask")
                 # init using only pre-trained sparse att mask weights
                 else:
                     vl_transformer.reload_attn_mask(pretrained_model['learn_vid_att.weight'])
@@ -991,16 +1319,16 @@ def main(args):
                         new_state_dict={}
                         for k,v in zip(pretrained_model.keys(), pretrained_model.values()):
                             if k!='learn_vid_att.weight' or k=='learn_vid_att.weight' and pretrained_mask_shape==init_mask_shape:
-                                new_state_dict={k:v}
-                        vl_transformer.load_state_dict(new_state_dict, strict=False)
+                                new_state_dict[k]=v
+                        load_compatible_state_dict(vl_transformer, new_state_dict, context="pretrained_checkpoint_mask_transfer")
                         del new_state_dict
                     else:
                         pretrained_model_state_dict = pretrained_model.state_dict()
                         new_state_dict={}
                         for k,v in zip(pretrained_model_state_dict.keys(), pretrained_model_state_dict.values()):
                             if k!='learn_vid_att.weight' or k=='learn_vid_att.weight' and pretrained_mask_shape==init_mask_shape:
-                                new_state_dict={k:v}
-                        vl_transformer.load_state_dict(new_state_dict, strict=False)
+                                new_state_dict[k]=v
+                        load_compatible_state_dict(vl_transformer, new_state_dict, context="pretrained_checkpoint_mask_transfer")
                         del new_state_dict
 
                 # expand pre-trained sparse att mask to the desired size          
@@ -1033,14 +1361,23 @@ def main(args):
 
         args.max_iter = len(train_dataloader)
         args.max_global_step =  args.max_iter// args.gradient_accumulation_steps
-        args.global_iters_per_epoch = args.max_global_step // args.num_train_epochs
-        args.save_steps = args.global_iters_per_epoch
+        flowtrace_step_limit = _flowtrace_train_step_limit(args)
+        if flowtrace_step_limit > 0:
+            args.max_global_step = min(args.max_global_step, flowtrace_step_limit)
+            args.max_iter = min(args.max_iter, args.max_global_step * args.gradient_accumulation_steps)
+            logger.info(
+                f"FlowTrace hard smoke train-step limit enabled: "
+                f"{flowtrace_step_limit}; capped max_global_step={args.max_global_step}, max_iter={args.max_iter}"
+            )
+        args.global_iters_per_epoch = max(1, args.max_global_step // max(1, args.num_train_epochs))
+        args.save_steps = args.max_global_step if flowtrace_step_limit > 0 else args.global_iters_per_epoch
         # args.save_steps = 10
 
         args, vl_transformer, optimizer, scheduler = mixed_precision_init(args, vl_transformer)
         args.resume_repro_meta = maybe_load_repro_optimizer(args, optimizer)
         maybe_fast_forward_repro_scheduler(args, scheduler)
         train(args, train_dataloader, val_dataloader, vl_transformer, tokenizer, training_saver, optimizer, scheduler)
+        _finalize_flowtrace_smoke_evidence(args)
 
     elif args.do_eval:
         val_dataloader = make_data_loader(args, args.val_yaml, tokenizer, args.distributed, is_train=False)

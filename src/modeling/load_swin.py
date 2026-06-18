@@ -73,11 +73,32 @@ class myVideoSwin(torch.nn.Module):
         self.backbone = backbone
         self.use_grid_feature = args.grid_feat
 
+    def flowtrace_stage_dims(self, return_stages=(2, 3)):
+        """Return channel dimensions emitted by ``forward_multiscale``.
+
+        ``SwinTransformer3D.forward_multiscale`` records each layer output after
+        that layer's optional downsample. Therefore stages before the last one
+        have the next layer's channel count, while the final stage keeps
+        ``backbone.num_features``. This lets FlowTrace modules be constructed
+        before the optimizer is built instead of being lazy-created in forward.
+        """
+        embed_dim = int(getattr(self.backbone, "embed_dim", 96))
+        num_layers = int(getattr(self.backbone, "num_layers", 4))
+        dims = []
+        for idx in return_stages:
+            stage_idx = int(idx)
+            dim_power = min(stage_idx + 1, num_layers - 1)
+            dims.append(int(embed_dim * (2 ** dim_power)))
+        return tuple(dims)
+
     def forward(self, x, return_stages=False):
         if return_stages:
             if hasattr(self.backbone, "forward_multiscale"):
-                return self.backbone.forward_multiscale(x)
+                out = self.backbone.forward_multiscale(x)
+                if isinstance(out, dict):
+                    return (out.get("final_tokens", out.get("final")), *out.get("stages", []))
+                return out
             final = self.backbone(x)
-            return {"final_tokens": final, "stages": [final, final]}
+            return (final, final, final)
         x = self.backbone(x)
         return x

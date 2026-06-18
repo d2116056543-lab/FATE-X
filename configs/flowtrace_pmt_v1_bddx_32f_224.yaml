@@ -1,9 +1,17 @@
 config_version: flowtrace_pmt_v1
 experiment_name: flowtrace_pmt_v1_bddx_32f_224_direct_image
 protocol_tag: test_selected_user_requested
+
 paths:
+  repo_root_windows: E:/sbw/FATE_Drive/fate_x_flowtrace_pmt_v1_worktree
   train_yaml: datasets_part/BDDX/training_32frames.yaml
   test_yaml: datasets/BDDX/testing_32frames.yaml
+  adapt_checkpoint: checkpoints/basemodel/checkpoints/model.bin
+  bert_dir: models/captioning/bert-base-uncased
+  video_swin_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
+  reason_anchor_output: .background_runs/flowtrace_reason_state_anchors
+  output_root: .background_runs
+
 data:
   max_num_frames: 32
   image_resolution: 224
@@ -11,15 +19,192 @@ data:
   feature_cache_enabled: false
   token_cache_enabled: false
   build_cache_before_training: false
-evaluation:
+  train_split: training
   eval_splits: [test]
-  best_selection_split: test
-  best_selection_metric: test_cider_action_plus_explanation
-optimization:
-  epochs: 40
-  no_metric_early_stop: true
-model:
-  flowtrace_enabled: true
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+
+baseline:
+  use_sep_cap: true
+  action_max_tokens: 15
+  explanation_max_tokens: 15
   video_token_reducer: none
   temporal_evidence_memory: none
   fate_x_reduce_control: false
+  control_branch_dense: true
+
+model:
+  flowtrace_enabled: true
+  state_dim: 256
+
+  multiscale:
+    return_stages: [2, 3]
+    fine_projection_dim: 256
+    coarse_projection_dim: 256
+    fusion: additive_layernorm
+    forbid_forward_hooks: true
+
+  transport:
+    matching_dim: 64
+    sinkhorn_iterations: 4
+    epsilon: 0.07
+    spatial_penalty: 0.25
+    dustbin: true
+    force_fp32: true
+
+  evidence_tracks:
+    num_tracks: 12
+    assignment: entmax15
+    position_bias: true
+    confidence_adaptive_prior: true
+    beta_max: 2.0
+    min_support_fraction: 0.01
+
+  camera_motion:
+    estimator: weighted_geometric_median
+    weiszfeld_iterations: 2
+    stop_gradient_weights: true
+
+  traffic_states:
+    num_states: 8
+    temporal_scales: [1, 2, 4]
+    axial_layers: 2
+    axial_heads: 4
+    dropout: 0.1
+
+  reason_anchors:
+    num_anchors: 8
+    split: training
+    text_encoder: local_bert
+    ridge_lambda: 0.001
+    action_residual_strength: 1.0
+    spherical_kmeans_restarts: 10
+    spherical_kmeans_iterations: 50
+    seed: 42
+
+  predicted_reason_state:
+    enabled: true
+    normalize: true
+
+  token_pmt:
+    enabled: true
+    rank: 32
+    output_zero_init: true
+    product_projection_bias: false
+    action_gate_max: 0.15
+    explanation_gate_max: 0.30
+    bounded_delta: true
+    require_reason_state_for_action: true
+    hook_location: pre_lm_prediction_head
+
+  control_protection:
+    dense_tokens_only: true
+    allow_state_tokens: false
+    allow_pmt: false
+    allow_reducer: false
+
+loss:
+  inherit_adapt_text_loss: true
+  inherit_adapt_control_loss: true
+  anchor_alignment: 0.05
+  reason_state_cosine: 0.05
+  dynamic_control_huber: 0.05
+  transport_cycle: 0.01
+  track_diversity: 0.002
+  state_diversity: 0.002
+  state_sparsity: 0.001
+  action_preserve_kl: 0.02
+  intervention_max: 0.01
+  intervention_batch_fraction: 0.25
+  intervention_start_epoch: 6
+
+optimization:
+  epochs: 40
+  optimizer: adamw
+  flowtrace_lr: 0.0002
+  token_pmt_lr: 0.0001
+  bert_last4_lr: 0.00002
+  swin_stage4_lr: 0.00001
+  swin_stage3_lr: 0.000005
+  control_head_lr: 0.00002
+  weight_decay_new: 0.01
+  weight_decay_backbone: 0.20
+  scheduler: warmup_linear
+  warmup_ratio: 0.10
+  min_lr_ratio: 0.02
+  gradient_clip_norm: 1.0
+  precision: fp16
+  gradient_checkpointing: true
+  checkpoint_offload_to_cpu: false
+  effective_batch_target: 64
+  no_metric_early_stop: true
+
+  freeze_schedule:
+    epochs_0_2:
+      train: [flowtrace, predicted_reason_state, token_pmt]
+    epochs_3_7:
+      train: [flowtrace, predicted_reason_state, token_pmt, bert_last2, swin_stage4, control_head]
+    epochs_8_39:
+      train: [flowtrace, predicted_reason_state, token_pmt, bert_last4, swin_stage3, swin_stage4, control_head]
+
+memory_probe:
+  candidates:
+    - {batch_size: 4, gradient_accumulation_steps: 16}
+    - {batch_size: 3, gradient_accumulation_steps: 22}
+    - {batch_size: 2, gradient_accumulation_steps: 32}
+  optional_if_under_30_gib:
+    batch_size: 5
+    gradient_accumulation_steps: 13
+  warmup_iterations: 3
+  measured_iterations: 20
+  preferred_peak_gib: [30, 42]
+  hard_peak_reserved_limit_gib: 43
+  select_largest_stable: true
+
+evaluation:
+  every_epoch: true
+  eval_splits: [test]
+  best_selection_split: test
+  best_selection_metric: test_cider_action_plus_explanation
+  tie_breakers:
+    - test_cider_explanation
+    - test_meteor_explanation
+    - negative_speed_rmse
+    - negative_course_rmse
+  beam_size: 3
+  save_latest: true
+  save_best_test: true
+  save_best_action: true
+  save_best_explanation: true
+
+faithfulness:
+  teacher_forced_scoring: true
+  state_intervention_score: true
+  evidence_tube_fidelity: true
+  action_explanation_mediation_agreement: true
+  temporal_order_reliance: true
+  random_equal_mass_trials: 5
+
+visualizations:
+  fixed_test_cases_per_epoch: 32
+  best_epoch_cases: 256
+  flowtrace_canvas: true
+  counterfactual_twin: true
+  state_decision_atlas: true
+  manual_boxes_forbidden: true
+  save_png: true
+  save_json: true
+
+supervisor:
+  foreground_only: true
+  heartbeat_seconds: 60
+  metric_based_stop: false
+  total_epochs_required: 40
+  transient_retry_count: 3
+  oom_fallback: true
+  resume_latest: true
+  user_stop_sentinel: control/STOP_REQUESTED_BY_USER
+  require_review_pass: true
+  require_clean_worktree: true
+  require_remote_sha_match: true

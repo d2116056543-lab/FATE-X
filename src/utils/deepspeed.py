@@ -9,7 +9,8 @@ def get_deepspeed_config(args):
         }
 
         use_fp16 = args.deepspeed_fp16
-        use_amp = not args.deepspeed_fp16  # by default, if not use deepspeed fp16, will enable deepspeed amp 
+        use_bf16 = getattr(args, "deepspeed_bf16", False)
+        use_amp = not use_fp16 and not use_bf16  # by default, if not low precision, will enable deepspeed amp
 
         if use_amp:
             config_params['amp'] = {
@@ -19,6 +20,11 @@ def get_deepspeed_config(args):
 
         if use_fp16:
             config_params['fp16'] = {
+                'enabled': True,
+            }
+
+        if use_bf16:
+            config_params['bf16'] = {
                 'enabled': True,
             }
 
@@ -42,9 +48,14 @@ def get_deepspeed_config(args):
                 'stage': args.zero_opt_stage,
             }
             if args.zero_opt_stage > 0:
-                config_params['fp16'] = {
-                    'enabled': True
-                }
+                if use_bf16:
+                    config_params['bf16'] = {
+                        'enabled': True
+                    }
+                else:
+                    config_params['fp16'] = {
+                        'enabled': True
+                    }
             config_params['zero_allow_untested_optimizer'] = True
 
         logger.info(pformat(config_params))
@@ -53,9 +64,17 @@ def get_deepspeed_config(args):
 
                 
 def fp32_to_fp16(inputs):
+    return fp32_to_low_precision(inputs, torch.half)
+
+
+def fp32_to_bf16(inputs):
+    return fp32_to_low_precision(inputs, torch.bfloat16)
+
+
+def fp32_to_low_precision(inputs, dtype):
     # deepspeed does not auto cast inputs.
     for k, v in inputs.items():
         if isinstance(v, torch.Tensor) and v.dtype == torch.float32:
-            v = v.to(dtype=torch.half)
+            v = v.to(dtype=dtype)
         inputs[k] = v
     return inputs

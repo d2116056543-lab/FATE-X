@@ -62,6 +62,16 @@ def make_batch_data_sampler(sampler, images_per_gpu, num_iters=None, start_iter=
     return batch_sampler
 
 
+def _resolve_limited_samples(args, is_train=True, fallback_num_gpus=1):
+    num_gpus = int(getattr(args, "num_gpus", fallback_num_gpus) or 1)
+    num_gpus = max(1, num_gpus)
+    attr = "limited_samples" if is_train else "limited_eval_samples"
+    value = int(getattr(args, attr, -1) or -1)
+    if value < 1:
+        return -1
+    return max(1, value // num_gpus)
+
+
 def make_data_sampler(dataset, shuffle, distributed, random_seed, limited_samples=-1):
     if distributed:
         if dataset.is_composite:
@@ -74,6 +84,11 @@ def make_data_sampler(dataset, shuffle, distributed, random_seed, limited_sample
             return torch.utils.data.distributed.DistributedSampler(dataset, shuffle=shuffle, seed=random_seed)
         else:  # use limited distributed sampler
             return DistributedSamplerLimited(dataset, shuffle=shuffle, limited=limited_samples)
+    if limited_samples >= 1:
+        indices = list(range(min(int(limited_samples), len(dataset))))
+        if shuffle:
+            return torch.utils.data.sampler.SubsetRandomSampler(indices)
+        return torch.utils.data.sampler.SequentialSampler(indices)
     if shuffle:
         sampler = torch.utils.data.sampler.RandomSampler(dataset)
     else:
@@ -102,10 +117,7 @@ def make_data_loader(args, yaml_file, tokenizer, is_distributed=True,
         num_iters = None
         start_iter = 0
 
-    if hasattr(args, 'limited_samples'):
-        limited_samples = args.limited_samples // num_gpus
-    else:
-        limited_samples = -1
+    limited_samples = _resolve_limited_samples(args, is_train=is_train, fallback_num_gpus=num_gpus)
     random_seed = args.seed
     sampler = make_data_sampler(
         dataset, shuffle, is_distributed, limited_samples=limited_samples,

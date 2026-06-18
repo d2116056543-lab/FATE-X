@@ -36,8 +36,9 @@ class LogSinkhornTransport(nn.Module):
             if positions is None:
                 positions = _grid_positions(n, prev.device, prev.dtype)
             pos = positions.float().to(prev.device)
-            prev_m = F.normalize(self.proj(prev), dim=-1)
-            cur_m = F.normalize(self.proj(cur), dim=-1)
+            proj_weight = self.proj.weight.float()
+            prev_m = F.normalize(F.linear(prev, proj_weight, None), dim=-1)
+            cur_m = F.normalize(F.linear(cur, proj_weight, None), dim=-1)
             sim = torch.matmul(prev_m, cur_m.transpose(-1, -2))
             dist = torch.cdist(pos, pos).pow(2).unsqueeze(0)
             score = (sim - self.spatial_penalty * dist) / max(self.epsilon, 1e-6)

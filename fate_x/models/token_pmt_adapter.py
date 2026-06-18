@@ -37,7 +37,17 @@ class TokenPMTAdapter(nn.Module):
         if token_type_ids is None:
             gate = torch.full(hidden_states.shape[:2], self.action_gate_max, device=hidden_states.device, dtype=hidden_states.dtype)
         else:
-            gate = torch.where(token_type_ids.to(hidden_states.device) == 1,
+            aligned_token_type_ids = token_type_ids[:, :hidden_states.shape[1]].to(hidden_states.device)
+            if aligned_token_type_ids.shape[1] < hidden_states.shape[1]:
+                pad_len = hidden_states.shape[1] - aligned_token_type_ids.shape[1]
+                pad = torch.zeros(
+                    aligned_token_type_ids.shape[0],
+                    pad_len,
+                    device=hidden_states.device,
+                    dtype=aligned_token_type_ids.dtype,
+                )
+                aligned_token_type_ids = torch.cat([aligned_token_type_ids, pad], dim=1)
+            gate = torch.where(aligned_token_type_ids == 1,
                                torch.tensor(self.explanation_gate_max, device=hidden_states.device, dtype=hidden_states.dtype),
                                torch.tensor(self.action_gate_max, device=hidden_states.device, dtype=hidden_states.dtype))
         if not torch.is_tensor(scale):
