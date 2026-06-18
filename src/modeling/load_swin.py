@@ -73,6 +73,11 @@ class myVideoSwin(torch.nn.Module):
         self.backbone = backbone
         self.use_grid_feature = args.grid_feat
 
-    def forward(self, x):
+    def forward(self, x, return_stages=False):
+        if return_stages:
+            if hasattr(self.backbone, "forward_multiscale"):
+                return self.backbone.forward_multiscale(x)
+            final = self.backbone(x)
+            return {"final_tokens": final, "stages": [final, final]}
         x = self.backbone(x)
         return x

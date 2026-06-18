@@ -1708,11 +1708,24 @@ class BertForImageCaptioning(BertPreTrainedModel):
             masked_pos=None, masked_ids=None,
             masked_pos_img=None, masked_token_img=None,
             token_type_ids=None, position_ids=None, head_mask=None,
-            is_training=True, encoder_history_states=None, car_info=None):
+            is_training=True, encoder_history_states=None, car_info=None,
+            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0):
         outputs = self.bert(input_ids, img_feats=img_feats, attention_mask=attention_mask,
                 position_ids=position_ids, token_type_ids=token_type_ids,
                 head_mask=head_mask,
                 encoder_history_states=encoder_history_states)
+        if flowtrace_bundle is not None and flowtrace_pmt_adapter is not None:
+            hidden, pmt_info = flowtrace_pmt_adapter(
+                outputs[0],
+                flowtrace_bundle.state_memory,
+                flowtrace_bundle.reason_state,
+                token_type_ids=token_type_ids,
+                scale=flowtrace_pmt_scale,
+            )
+            flowtrace_bundle.token_state_routing = pmt_info.get("token_state_routing")
+            flowtrace_bundle.pmt_delta = pmt_info.get("pmt_delta")
+            flowtrace_bundle.pmt_gate = pmt_info.get("pmt_gate")
+            outputs = (hidden,) + outputs[1:]
         if is_training:
             sequence_output = outputs[0][:, :masked_pos.shape[-1], :]
             # num_masks_in_batch * hidden_size
@@ -1850,7 +1863,10 @@ class BertForImageCaptioning(BertPreTrainedModel):
             'masked_pos': masked_pos, 'attention_mask': attention_mask,
             'token_type_ids': token_type_ids, 'position_ids': position_ids,
             'is_training': False,
-            'encoder_history_states': self.prev_encoded_layers}
+            'encoder_history_states': self.prev_encoded_layers,
+            'flowtrace_bundle': getattr(self, 'flowtrace_bundle', None),
+            'flowtrace_pmt_adapter': getattr(self, 'flowtrace_pmt_adapter', None),
+            'flowtrace_pmt_scale': getattr(self, 'flowtrace_pmt_scale', 1.0)}
 
     def get_output_embeddings(self):
         return self.decoder
@@ -1867,7 +1883,8 @@ class BertForImageCaptioning(BertPreTrainedModel):
             use_cbs=False, fsm=None, num_constraints=None,
             min_constraints_to_satisfy=None, use_hypo=False,
             decoding_constraint_flag=None, bad_ending_ids=None,
-            car_info = None
+            car_info = None,
+            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0
             ):
         """ Generates captions given image features
         """
@@ -1877,6 +1894,9 @@ class BertForImageCaptioning(BertPreTrainedModel):
         self.max_seq_len = max_length
         self.mask_token_id = mask_token_id
         self.prev_encoded_layers = None
+        self.flowtrace_bundle = flowtrace_bundle
+        self.flowtrace_pmt_adapter = flowtrace_pmt_adapter
+        self.flowtrace_pmt_scale = flowtrace_pmt_scale
         # NOTE: num_keep_best is not equavilant to num_return_sequences
         # num_keep_best is the number of hypotheses to keep in beam search
         # num_return_sequences is the repeating times of input, coupled with

@@ -678,8 +678,32 @@ class SwinTransformer3D(nn.Module):
         else:
             raise TypeError('pretrained must be a str or None')
 
-    def forward(self, x):
+    def forward_multiscale(self, x, return_stages=(2, 3)):
+        """Forward once and return the final tensor plus requested stages.
+
+        Stages are captured from the live layer outputs, not hooks. Returned
+        tensors keep the native [B, C, T, H, W] layout expected by ADAPT.
+        """
+        x = self.patch_embed(x)
+        x = self.pos_drop(x)
+        stages = []
+        for idx, layer in enumerate(self.layers):
+            x = layer(x.contiguous())
+            if idx in return_stages:
+                stages.append(x)
+        final = rearrange(x, 'n c d h w -> n d h w c')
+        final = self.norm(final)
+        final = rearrange(final, 'n d h w c -> n c d h w')
+        if not stages:
+            stages = [final, final]
+        if len(stages) == 1:
+            stages = [stages[0], final]
+        return {"final_tokens": final, "stages": stages, "final": final}
+
+    def forward(self, x, return_stages=False):
         """Forward function."""
+        if return_stages:
+            return self.forward_multiscale(x)
         x = self.patch_embed(x)
 
         x = self.pos_drop(x)

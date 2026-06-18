@@ -3,6 +3,8 @@ from fairscale.nn.misc import checkpoint_wrapper
 import random
 from fate_x.models.video_token_reducer import VideoTokenReducer
 from fate_x.models.temporal_evidence_memory import TemporalEvidenceMemory
+from fate_x.models.flowtrace_pmt_model import FlowTracePMTModel
+from fate_x.models.token_pmt_adapter import TokenPMTAdapter
 from src.modeling.load_sensor_pred_head import get_sensor_pred_model
 
 class MultitaskVideoTransformer(torch.nn.Module):
@@ -67,6 +69,18 @@ class MultitaskVideoTransformer(torch.nn.Module):
             self.fate_x_memory = TemporalEvidenceMemory(self.img_feature_dim)
         else:
             self.fate_x_memory = None
+        self.flowtrace_enabled = bool(getattr(args, 'flowtrace_enabled', False))
+        self.flowtrace_encoder = None
+        self.token_pmt_adapter = None
+        if self.flowtrace_enabled:
+            state_dim = int(getattr(args, 'flowtrace_state_dim', 256))
+            self.flowtrace_encoder = None  # lazy-init after first multiscale forward reveals dims
+            self.token_pmt_adapter = TokenPMTAdapter(
+                hidden_dim=int(getattr(config, 'hidden_size', self.img_feature_dim)),
+                state_dim=state_dim,
+                rank=int(getattr(args, 'flowtrace_pmt_rank', 32)),
+            )
+            self.flowtrace_state_dim = state_dim
         self.compute_mask_on_the_fly = False # deprecated
         self.mask_prob = args.mask_prob
         self.mask_token_id = -1
@@ -109,7 +123,14 @@ class MultitaskVideoTransformer(torch.nn.Module):
         B, S, C, H, W = images.shape  # batch, segment, chanel, hight, width
         # (B x S x C x H x W) --> (B x C x S x H x W)
         images = images.permute(0, 2, 1, 3, 4)
-        vid_feats = self.swin(images)
+        backbone_out = self.swin(images, return_stages=self.flowtrace_enabled)
+        flowtrace_bundle = None
+        if self.flowtrace_enabled and isinstance(backbone_out, dict):
+            vid_feats = backbone_out.get('final_tokens', backbone_out.get('final'))
+            stages = backbone_out.get('stages', [])
+        else:
+            vid_feats = backbone_out
+            stages = []
 
         # tokenize video features to video tokens
         if self.use_grid_feat==True:
@@ -120,6 +141,18 @@ class MultitaskVideoTransformer(torch.nn.Module):
         vid_feats_dense = self.fc(vid_feats)
         vid_feats_text = vid_feats_dense
         vid_feats_control = vid_feats_dense
+        if self.flowtrace_enabled and len(stages) >= 2:
+            fine_stage, coarse_stage = stages[-2], stages[-1]
+            fine_dim = int(fine_stage.shape[1])
+            coarse_dim = int(coarse_stage.shape[1])
+            if self.flowtrace_encoder is None:
+                self.flowtrace_encoder = FlowTracePMTModel(
+                    fine_dim=fine_dim,
+                    coarse_dim=coarse_dim,
+                    dense_dim=self.img_feature_dim,
+                    state_dim=self.flowtrace_state_dim,
+                ).to(vid_feats_dense.device)
+            flowtrace_bundle = self.flowtrace_encoder(vid_feats_dense, fine_stage, coarse_stage)
 
         text_kwargs = dict(kwargs)
         control_kwargs = dict(kwargs)
@@ -150,11 +183,17 @@ class MultitaskVideoTransformer(torch.nn.Module):
             'control_visual_tokens': int(vid_feats_control.shape[1]),
             'fate_x_text_reduce_only': bool(self.fate_x_text_reduce_only),
             'fate_x_reduce_control': bool(self.fate_x_reduce_control),
+            'flowtrace_enabled': bool(self.flowtrace_enabled),
+            'flowtrace_state_tokens': 0 if flowtrace_bundle is None else int(flowtrace_bundle.state_memory.shape[1]),
         })
 
         # prepare branch-specific transformer inputs
         text_kwargs['img_feats'] = vid_feats_text
         control_kwargs['img_feats'] = vid_feats_control
+        if flowtrace_bundle is not None:
+            text_kwargs['flowtrace_bundle'] = flowtrace_bundle
+            text_kwargs['flowtrace_pmt_adapter'] = self.token_pmt_adapter
+            text_kwargs['flowtrace_pmt_scale'] = getattr(self, 'flowtrace_pmt_scale', 1.0)
 
         # disable bert attention outputs to avoid some bugs
         if self.trans_encoder.bert.encoder.output_attentions:

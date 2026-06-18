@@ -1,0 +1,25 @@
+config_version: flowtrace_pmt_v1
+experiment_name: flowtrace_pmt_v1_bddx_32f_224_direct_image
+protocol_tag: test_selected_user_requested
+paths:
+  train_yaml: datasets_part/BDDX/training_32frames.yaml
+  test_yaml: datasets/BDDX/testing_32frames.yaml
+data:
+  max_num_frames: 32
+  image_resolution: 224
+  direct_image_training: true
+  feature_cache_enabled: false
+  token_cache_enabled: false
+  build_cache_before_training: false
+evaluation:
+  eval_splits: [test]
+  best_selection_split: test
+  best_selection_metric: test_cider_action_plus_explanation
+optimization:
+  epochs: 40
+  no_metric_early_stop: true
+model:
+  flowtrace_enabled: true
+  video_token_reducer: none
+  temporal_evidence_memory: none
+  fate_x_reduce_control: false

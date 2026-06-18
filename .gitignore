@@ -157,3 +157,8 @@ src/**/*.pyc
 
 .background_runs/
 docs/FATE_*_IMPLEMENTATION_STATUS_*.md
+
+# Local user-requested status mirrors; canonical copies live under E:\sbw\FATE_Drive.
+/task_plan.md
+/findings.md
+/progress.md
