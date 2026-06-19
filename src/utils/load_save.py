@@ -4,7 +4,17 @@ saving utilities
 import json
 import os
 from os.path import dirname, exists, join, realpath
-from apex import amp
+try:
+    from apex import amp
+except ModuleNotFoundError:
+    class _MissingApexAmp:
+        def state_dict(self):
+            raise RuntimeError("Apex AMP is not installed; use native bf16/fp16 or install NVIDIA apex.")
+
+        def load_state_dict(self, _state):
+            raise RuntimeError("Apex AMP is not installed; use native bf16/fp16 or install NVIDIA apex.")
+
+    amp = _MissingApexAmp()
 from easydict import EasyDict as edict
 from .basic_utils import is_jsonable
 

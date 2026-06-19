@@ -3213,7 +3213,11 @@ def softnms(rects, th=0.5):
 
 def acquireLock(lock_f='/tmp/lockfile.LOCK'):
     ''' acquire exclusive lock file access '''
-    import fcntl
+    try:
+        import fcntl
+    except ModuleNotFoundError:
+        os.makedirs(op.dirname(lock_f), exist_ok=True)
+        return open(lock_f, 'w+')
     locked_file_descriptor = open(lock_f, 'w+')
     fcntl.lockf(locked_file_descriptor, fcntl.LOCK_EX)
     return locked_file_descriptor
