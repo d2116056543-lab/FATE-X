@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _git(args: list[str], cwd: str | Path) -> str:
-    return subprocess.check_output(["git", *args], cwd=str(cwd), text=True, stderr=subprocess.STDOUT).strip()
+    return subprocess.check_output(["git", "-c", "safe.directory=*", *args], cwd=str(cwd), text=True, stderr=subprocess.STDOUT).strip()
 
 
 def git_guard(repo_root: str | Path, expected_branch: str = "flowtrace_pmt_v1", remote: str = "github") -> dict[str, str]:
