@@ -12,3 +12,6 @@ def test_foreground_scripts_do_not_use_detached_processes():
         text = path.read_text(encoding="utf-8")
         assert "audit_acpr_flowcal_pp" in text
         assert "train_acpr_flowcal_pp" in text
+        if path.suffix == ".ps1":
+            assert "RequireReviewPass" in text
+            assert "REVIEW_PASS_ACPR_FLOWCAL_PP_V1.txt" in text

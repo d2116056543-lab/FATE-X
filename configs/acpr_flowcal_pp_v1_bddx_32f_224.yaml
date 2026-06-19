@@ -1,19 +1,25 @@
 config_version: acpr_flowcal_pp_v1
 experiment_name: acpr_flowcal_pp_v1_bddx_32f_224
 protocol_tag: test_selected_user_requested
+
 repository:
   expected_worktree: E:/sbw/FATE_Drive/fate_x_flowtrace_pmt_v1_worktree
   expected_branch: flowtrace_pmt_v1
   github_remote: github
   require_clean_worktree: true
   require_remote_sha_match: true
+
 paths:
   train_yaml: datasets_part/BDDX/training_32frames.yaml
   test_yaml: datasets/BDDX/testing_32frames.yaml
+  adapt_checkpoint: checkpoints/basemodel/checkpoints/model.bin
+  bert_dir: models/captioning/bert-base-uncased
+  video_swin_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
   output_root: .background_runs
   predicate_config: configs/acpr_flow_local_predicates.yaml
   flow_factor_config: configs/acpr_flow_factors.yaml
   text_rule_config: configs/acpr_flow_text_rules.yaml
+
 data:
   max_num_frames: 32
   image_resolution: 224
@@ -22,39 +28,144 @@ data:
   token_cache_enabled: false
   build_cache_before_training: false
   use_sep_cap: true
+  action_max_tokens: 15
+  explanation_max_tokens: 15
+  signals: [course, speed]
+  invalid_control_value: -1.0
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
   train_calib_fraction: 0.10
   train_calib_seed: 20260619
   formal_eval_splits: [test]
+
 legacy:
   legacy_flowtrace_v1_enabled: false
   legacy_token_pmt_enabled: false
   legacy_sinkhorn_transport_enabled: false
   learn_mask_enabled: false
+  video_token_reducer: none
+  temporal_evidence_memory: none
+  reduce_control: false
+
 model:
   state_dim: 256
   text_hidden_dim: 768
+
+  multiscale:
+    fine_stage: 2
+    coarse_stage: 3
+    fusion: additive_layernorm
+    single_backbone_forward: true
+
   predicates:
     num_predicates: 32
     assignment: entmax15
+    region_prior: true
+    temperature_min: 0.2
+    temperature_max: 5.0
+    unknown_negative_weight: 0.075
+
+  transport:
+    type: local_partial
+    global_shift_radius: 2
+    local_radius: 2
+    local_candidates: 25
+    dustbin: true
+    matching_dim: 64
+    spatial_penalty: 0.25
+    force_fp32: true
+    column_normalization: false
+
   flow:
+    num_regime: 4
+    num_phase: 4
+    num_source: 5
     total_factors: 13
+    assignment: entmax15
+    use_grammar_prior: true
+    unknown_negative_weight: 0.075
+
+  reason_target:
+    mode: online_gram_schmidt
+    action_residual_strength: 1.0
+    target_detached: true
+    saved_text_embedding_cache: false
+
   reason_memory:
+    local_tokens: 32
+    flow_tokens: 13
+    null_tokens: 1
     total_tokens: 46
+    hidden_dim: 768
+
+  hardpair:
+    enabled: true
+    queue_size: 4096
+    max_pairs_per_batch: 64
+    start_epoch: 2
+    margin: 0.20
+    action_similarity_min: 0.75
+    video_similarity_min: 0.45
+    control_similarity_min: 0.70
+    reason_similarity_max: 0.35
+    pair_weight: 0.03
+    pair_budget_ratio: 0.08
+
   seca:
     enabled: true
+    attention: entmax15
+    null_reason_token: true
+    output_projection_init: xavier
+    action_gate_init: 0.0
+    explanation_gate_init: 0.0
+    action_gate_max: 0.15
+    explanation_gate_max: 0.30
+    action_evidence_grad_scale: 0.25
+    explanation_evidence_grad_scale: 1.0
     text_hidden_only: true
     hook_location: pre_lm_prediction_head
+
   control_adapter:
     enabled: true
+    attention: entmax15
+    gate_init: 0.0
+    max_residual_std_fraction: 0.15
+    evidence_grad_scale: 0.25
     direct_flow_bypass: false
+
+  prefix_future:
+    enabled_full_only: true
+    prefix_frames: 24
+    target_frames: 8
+    batch_fraction: 0.25
+
 loss:
   action_text: 1.0
   explanation_text: 1.0
   control: 0.05
   predicate_pu: 0.05
   flow_pu: 0.03
+  reason_semantic: 0.05
+  future_control: 0.02
+  trajectory: 0.01
+  action_preserve: 0.02
+  control_preserve: 0.01
   memory_diversity: 0.001
+  latent_intervention_loss: 0.0
+  legacy_sparse_mask_loss: 0.0
+
 optimization:
+  optimizer: adamw
+  precision: bf16
+  allow_fp16_fallback: true
+  fp16_initial_loss_scale: 4096
+  gradient_checkpointing: true
+  gradient_clip_norm: 1.0
+  scheduler: cosine
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.05
+
   learning_rates:
     predicate_field: 0.00010
     flow_composer: 0.00010
@@ -66,39 +177,129 @@ optimization:
     bert_last2: 0.00001
     swin_last_stage: 0.000005
     sensor_head: 0.00001
+
+  weight_decay:
+    new_modules: 0.01
+    backbone: 0.05
+    bias_and_norm: 0.0
+
 experiment_suite:
   baseline_eval:
     enabled: true
+    checkpoint: adapt
+
   common_stage_a:
     method: acpr_x
     epochs: 6
+    epochs_0_1:
+      train: [predicate_field, reason_memory, hardpair_projection, temporal_seca, control_adapter]
+      freeze: [video_swin, bert, sensor_head]
+      action_gate_max: 0.0
+      explanation_gate_max: 0.05
+      control_gate_max: 0.0
+      hardpair_enabled: false
+    epochs_2_5:
+      train: [predicate_field, reason_memory, hardpair_projection, temporal_seca, control_adapter, bert_last2, swin_last_stage, sensor_head]
+      action_gate_max: 0.08
+      explanation_gate_max: 0.20
+      control_gate_max: 0.08
+      hardpair_enabled: true
+    transport_enabled: false
+    flow_enabled: false
+    prefix_future_enabled: false
+
   fork_b1_acpr_x:
+    resume_from: checkpoint_acpr_x_common
     train_epochs: 12
     calibration_epochs: 3
+    transport_enabled: false
+    flow_enabled: false
+    prefix_future_enabled: false
+
   fork_b2_acpr_flowcal_pp:
+    resume_from: checkpoint_acpr_x_common
     train_epochs: 12
     calibration_epochs: 3
+    transport_enabled: true
+    flow_enabled: true
+    prefix_future_enabled: true
+
 sequence_calalign:
   fit_split: train_calib
   fit_uses_test: false
+  alpha_action: [0.0, 0.025, 0.05, 0.075, 0.10, 0.15]
+  alpha_explanation: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+  alpha_speed: [0.0, 0.05, 0.10, 0.15, 0.20]
+  alpha_course: [0.0, 0.05, 0.10, 0.15, 0.20]
+  temperature_action: [0.85, 0.925, 1.0, 1.075, 1.15]
+  temperature_explanation: [0.85, 0.925, 1.0, 1.075, 1.15]
+  calibration_objective:
+    action_nll: 1.0
+    explanation_nll: 1.0
+    speed_rmse: 0.25
+    course_rmse: 0.25
+    preserve_kl: 0.10
+
+memory_probe:
+  candidates:
+    - {batch_size: 5, gradient_accumulation_steps: 13}
+    - {batch_size: 4, gradient_accumulation_steps: 16}
+    - {batch_size: 3, gradient_accumulation_steps: 22}
+    - {batch_size: 2, gradient_accumulation_steps: 32}
+  warmup_steps: 3
+  measured_steps: 20
+  preferred_peak_reserved_gib: [30, 42]
+  hard_peak_reserved_limit_gib: 43
+  select_largest_stable: true
+  effective_batch_target: 64
+
 evaluation:
   after_every_epoch: true
   eval_splits: [test]
   best_selection_split: test
-  metric_based_early_stop: false
+  best_selection_metric: cider_action_plus_explanation_control_safe
+  control_noninferiority_ratio: 1.01
+  tie_breakers:
+    - cider_explanation
+    - meteor_explanation
+    - cider_action
+    - negative_speed_rmse
+    - negative_course_rmse
+  beam_size_formal: 3
+  beam_size_smoke: 1
   save_latest: true
   save_best_test: true
+  save_best_action: true
+  save_best_explanation: true
+  save_best_control_safe: true
+  metric_based_early_stop: false
+
 faithfulness:
   teacher_forced_state_intervention: true
+  teacher_forced_predicate_intervention: true
+  evidence_tube_fidelity: true
+  random_equal_mass_trials: 5
   temporal_shuffle: true
+  temporal_reverse: true
+  prefix_lengths: [8, 16, 24, 32]
+  free_generation_counterfactual_cases: 64
+
 visualization:
+  fixed_cases_per_epoch: 16
+  best_checkpoint_cases: 256
   canvas: true
   dataset_atlas: true
+  manual_boxes_forbidden: true
   save_png: true
   save_json: true
+
 supervisor:
   foreground_only: true
+  heartbeat_seconds: 60
   metric_based_stop: false
+  transient_retry_count: 3
+  oom_fallback: true
+  resume_latest: true
   require_review_pass: true
   require_clean_worktree: true
   require_remote_sha_match: true
