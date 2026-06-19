@@ -93,6 +93,7 @@ def run_memory_probe(
                 max_steps=warmup_steps + measured_steps,
                 batch_size=batch_size,
                 epochs=1,
+                gradient_accumulation_steps=accum,
                 load_pretrained_backbone=True,
             )
         except Exception as exc:  # pragma: no cover - exercised by remote/runtime gate.

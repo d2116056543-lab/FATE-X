@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 from types import SimpleNamespace
@@ -285,11 +287,37 @@ def train_formal(
     max_steps: int = 8,
     batch_size: int = 1,
     epochs: int = 1,
+    gradient_accumulation_steps: int = 1,
+    checkpoint_every_steps: int = 500,
     load_pretrained_backbone: bool = True,
 ) -> None:
     cfg = load_acpr_flow_config(config)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    gradient_accumulation_steps = max(1, int(gradient_accumulation_steps))
+    max_steps = int(max_steps)
+    checkpoint_every_steps = int(checkpoint_every_steps)
+    config_path = Path(config)
+    config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest() if config_path.exists() else None
+    run_manifest = {
+        "config": str(config),
+        "config_sha256": config_sha256,
+        "output_dir": str(out),
+        "device": str(device),
+        "max_steps": max_steps,
+        "max_steps_semantics": "0_or_negative_means_full_epoch_training_without_step_cap",
+        "batch_size": int(batch_size),
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "effective_batch_size": int(batch_size) * gradient_accumulation_steps,
+        "epochs": int(epochs),
+        "checkpoint_every_steps": checkpoint_every_steps,
+        "direct_image_training": bool(cfg.get("data", {}).get("direct_image_training", True)),
+        "feature_cache_enabled": bool(cfg.get("data", {}).get("feature_cache_enabled", False)),
+        "token_cache_enabled": bool(cfg.get("data", {}).get("token_cache_enabled", False)),
+        "precision_requested": str(cfg.get("optimization", {}).get("precision", "fp32")),
+        "started_at_unix": time.time(),
+    }
+    (out / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, sort_keys=True), encoding="utf-8")
     suite = build_formal_experiment_suite(cfg)
     (out / "formal_suite_plan.json").write_text(json.dumps(suite, indent=2), encoding="utf-8")
     checkpoint_report = load_formal_checkpoints(cfg)
@@ -305,44 +333,106 @@ def train_formal(
     tokenizer_cls = _import_bert_tokenizer()
     tokenizer = tokenizer_cls.from_pretrained(cfg["paths"]["bert_dir"], do_lower_case=True)
     reason_embedding_weight = load_bert_word_embedding_weight(cfg["paths"]["bert_dir"], device=device)
-    loader = build_bddx_acpr_dataloader(cfg, split="train", batch_size=batch_size, max_samples=max_steps * batch_size, tokenizer=tokenizer)
+    max_samples = max_steps * batch_size if max_steps > 0 else -1
+    loader = build_bddx_acpr_dataloader(cfg, split="train", batch_size=batch_size, max_samples=max_samples, tokenizer=tokenizer)
     status = []
+    metrics_path = out / "metrics_summary.jsonl"
+    metrics_file = metrics_path.open("w", encoding="utf-8")
     global_step = 0
-    for epoch in range(epochs):
-        for keys, examples, meta in loader:
-            batch = adapt_batch_to_acpr_flow_batch(keys, examples, meta, device=device)
-            reason_semantic_target = build_reason_semantic_target_for_batch(
-                batch.raw_actions,
-                batch.raw_justifications,
-                tokenizer,
-                reason_embedding_weight,
-                device=device,
-                residual_strength=float(cfg.get("model", {}).get("reason_target", {}).get("action_residual_strength", 1.0)),
-            )
-            res = model(batch=batch, reason_semantic_target=reason_semantic_target)
-            opt.zero_grad(set_to_none=True)
-            res.total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.get("optimization", {}).get("gradient_clip_norm", 1.0)))
-            opt.step()
-            global_step += 1
-            rec = {
-                "epoch": epoch,
-                "global_step": global_step,
-                "loss": float(res.total_loss.detach().cpu()),
-                "frames_shape": list(batch.frames.shape),
-                "sample_ids": batch.sample_ids[:2],
-                "reason_semantic_target_norm": float(reason_semantic_target.norm(dim=-1).mean().detach().cpu()),
-                "loss_components": {k: float(v.detach().cpu()) for k, v in res.loss_components.items()},
-            }
-            status.append(rec)
-            print("ACPR_FLOW_BATCH " + json.dumps(rec, ensure_ascii=True), flush=True)
-            if global_step >= max_steps:
+    optimizer_step = 0
+    opt.zero_grad(set_to_none=True)
+    precision = str(cfg.get("optimization", {}).get("precision", "fp32")).lower()
+    use_bf16 = bool(str(device).startswith("cuda") and precision == "bf16" and torch.cuda.is_available() and torch.cuda.is_bf16_supported())
+    autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
+    run_manifest["precision_active"] = "bf16" if use_bf16 else "fp32"
+    (out / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _save_checkpoint(epoch_idx: int) -> None:
+        payload = {
+            "model": model.state_dict(),
+            "optimizer": opt.state_dict(),
+            "epoch": epoch_idx,
+            "global_step": global_step,
+            "optimizer_step": optimizer_step,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+        }
+        torch.save(payload, out / "checkpoint_latest.pth")
+        torch.save(payload, out / "checkpoint_best_test.pth")
+
+    try:
+        for epoch in range(epochs):
+            for keys, examples, meta in loader:
+                batch = adapt_batch_to_acpr_flow_batch(keys, examples, meta, device=device)
+                reason_semantic_target = build_reason_semantic_target_for_batch(
+                    batch.raw_actions,
+                    batch.raw_justifications,
+                    tokenizer,
+                    reason_embedding_weight,
+                    device=device,
+                    residual_strength=float(cfg.get("model", {}).get("reason_target", {}).get("action_residual_strength", 1.0)),
+                )
+                with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_bf16):
+                    res = model(batch=batch, reason_semantic_target=reason_semantic_target)
+                    loss_for_backward = res.total_loss / float(gradient_accumulation_steps)
+                if not torch.isfinite(res.total_loss).all():
+                    raise FloatingPointError(f"Non-finite total loss at global_step={global_step + 1}: {float(res.total_loss.detach().cpu())}")
+                reason_norm = reason_semantic_target.norm(dim=-1).mean()
+                if not torch.isfinite(reason_norm).all() or float(reason_norm.detach().cpu()) <= 0.0:
+                    raise FloatingPointError(f"Invalid reason_semantic_target_norm at global_step={global_step + 1}: {float(reason_norm.detach().cpu())}")
+                for name, value in res.loss_components.items():
+                    if not torch.isfinite(value).all():
+                        raise FloatingPointError(f"Non-finite loss component {name} at global_step={global_step + 1}")
+                loss_for_backward.backward()
+                global_step += 1
+                rec = {
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "optimizer_step": optimizer_step,
+                    "loss": float(res.total_loss.detach().cpu()),
+                    "frames_shape": list(batch.frames.shape),
+                    "sample_ids": batch.sample_ids[:2],
+                    "reason_semantic_target_norm": float(reason_norm.detach().cpu()),
+                    "loss_components": {k: float(v.detach().cpu()) for k, v in res.loss_components.items()},
+                    "precision_active": run_manifest["precision_active"],
+                }
+                status.append(rec)
+                metrics_file.write(json.dumps(rec, ensure_ascii=True) + "\n")
+                metrics_file.flush()
+                print("ACPR_FLOW_BATCH " + json.dumps(rec, ensure_ascii=True), flush=True)
+                should_step = (global_step % gradient_accumulation_steps) == 0
+                if should_step:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.get("optimization", {}).get("gradient_clip_norm", 1.0)))
+                    if not torch.isfinite(grad_norm):
+                        raise FloatingPointError(f"Non-finite gradient norm at global_step={global_step}: {float(grad_norm.detach().cpu())}")
+                    opt.step()
+                    opt.zero_grad(set_to_none=True)
+                    optimizer_step += 1
+                if checkpoint_every_steps > 0 and global_step % checkpoint_every_steps == 0:
+                    _save_checkpoint(epoch)
+                if max_steps > 0 and global_step >= max_steps:
+                    break
+            if global_step % gradient_accumulation_steps != 0:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.get("optimization", {}).get("gradient_clip_norm", 1.0)))
+                if not torch.isfinite(grad_norm):
+                    raise FloatingPointError(f"Non-finite gradient norm at final accumulation step: {float(grad_norm.detach().cpu())}")
+                opt.step()
+                opt.zero_grad(set_to_none=True)
+                optimizer_step += 1
+            _save_checkpoint(epoch)
+            if max_steps > 0 and global_step >= max_steps:
                 break
-        torch.save({"model": model.state_dict(), "epoch": epoch, "global_step": global_step}, out / "checkpoint_latest.pth")
-        torch.save({"model": model.state_dict(), "epoch": epoch, "global_step": global_step}, out / "checkpoint_best_test.pth")
-        if global_step >= max_steps:
-            break
-    (out / "metrics_summary.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=True) for x in status), encoding="utf-8")
+        run_complete = {
+            "completed": True,
+            "global_step": global_step,
+            "optimizer_step": optimizer_step,
+            "epochs_requested": int(epochs),
+            "max_steps": max_steps,
+            "finished_at_unix": time.time(),
+            "metrics_summary": str(metrics_path),
+        }
+        (out / "run_complete.json").write_text(json.dumps(run_complete, indent=2, sort_keys=True), encoding="utf-8")
+    finally:
+        metrics_file.close()
 
 
 def main() -> None:
@@ -354,6 +444,8 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--beam_size", type=int, default=1)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--checkpoint_every_steps", type=int, default=500)
     parser.add_argument("--no_pretrained_backbone", action="store_true")
     args = parser.parse_args()
     train_formal(
@@ -363,6 +455,8 @@ def main() -> None:
         args.max_steps,
         args.batch_size,
         args.epochs,
+        args.gradient_accumulation_steps,
+        args.checkpoint_every_steps,
         load_pretrained_backbone=not args.no_pretrained_backbone,
     )
 

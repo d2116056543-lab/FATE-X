@@ -8,7 +8,17 @@ from fate_x.engine.supervise_acpr_flowcal_foreground import write_foreground_sup
 def test_memory_probe_runs_candidates_and_writes_selection(tmp_path, monkeypatch):
     calls = []
 
-    def fake_train_formal(config, output_dir, device, max_steps, batch_size, epochs, load_pretrained_backbone=True):
+    def fake_train_formal(
+        config,
+        output_dir,
+        device,
+        max_steps,
+        batch_size,
+        epochs,
+        gradient_accumulation_steps=1,
+        checkpoint_every_steps=500,
+        load_pretrained_backbone=True,
+    ):
         calls.append(
             {
                 "config": config,
@@ -17,6 +27,7 @@ def test_memory_probe_runs_candidates_and_writes_selection(tmp_path, monkeypatch
                 "max_steps": max_steps,
                 "batch_size": batch_size,
                 "epochs": epochs,
+                "gradient_accumulation_steps": gradient_accumulation_steps,
             }
         )
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -35,6 +46,7 @@ def test_memory_probe_runs_candidates_and_writes_selection(tmp_path, monkeypatch
 
     assert calls and calls[0]["batch_size"] == 2
     assert calls[0]["max_steps"] == 3
+    assert calls[0]["gradient_accumulation_steps"] == 32
     assert report["selected"]["effective_batch"] == 64
     selection = json.loads((tmp_path / "memory_probe_selection.json").read_text(encoding="utf-8"))
     assert selection["selected"]["batch_size"] == 2
