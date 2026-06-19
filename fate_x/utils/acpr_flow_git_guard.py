@@ -4,8 +4,33 @@ import subprocess
 from pathlib import Path
 
 
+def _windows_gitdir_to_wsl(path: str) -> str:
+    normalized = path.strip().replace("\\", "/")
+    if len(normalized) >= 3 and normalized[1:3] == ":/":
+        drive = normalized[0].lower()
+        return f"/mnt/{drive}/{normalized[3:]}"
+    return normalized
+
+
+def _worktree_git_args(cwd: str | Path) -> list[str]:
+    git_file = Path(cwd) / ".git"
+    if not git_file.is_file():
+        return []
+    text = git_file.read_text(encoding="utf-8").strip()
+    if not text.lower().startswith("gitdir:"):
+        return []
+    gitdir = _windows_gitdir_to_wsl(text.split(":", 1)[1].strip())
+    return ["--git-dir", gitdir, "--work-tree", str(cwd)]
+
+
 def _git(args: list[str], cwd: str | Path) -> str:
-    return subprocess.check_output(["git", "-c", "safe.directory=*", *args], cwd=str(cwd), text=True, stderr=subprocess.STDOUT).strip()
+    try:
+        return subprocess.check_output(["git", "-c", "safe.directory=*", *args], cwd=str(cwd), text=True, stderr=subprocess.STDOUT).strip()
+    except subprocess.CalledProcessError:
+        prefix = _worktree_git_args(cwd)
+        if not prefix:
+            raise
+        return subprocess.check_output(["git", *prefix, *args], cwd=str(cwd), text=True, stderr=subprocess.STDOUT).strip()
 
 
 def git_guard(repo_root: str | Path, expected_branch: str = "flowtrace_pmt_v1", remote: str = "github") -> dict[str, str]:
