@@ -53,4 +53,8 @@ class TemporalSECA(nn.Module):
         text_out = text + scale * delta
         out = torch.cat([text_out, image], dim=1)
         attn = torch.where(action_mask.unsqueeze(-1), attn_a, attn_e)
-        return out, {"token_reason_attention": attn, "token_delta": scale * delta, "image_hidden_max_diff": (out[:, text_len:] - image).abs().max()}
+        if image.numel() == 0:
+            image_diff = hidden.new_zeros(())
+        else:
+            image_diff = (out[:, text_len:] - image).abs().max()
+        return out, {"token_reason_attention": attn, "token_delta": scale * delta, "image_hidden_max_diff": image_diff}
