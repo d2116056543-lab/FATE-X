@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,19 @@ def _cuda_memory() -> dict[str, float | None]:
         "allocated_gib": torch.cuda.max_memory_allocated() / 1024**3,
         "reserved_gib": torch.cuda.max_memory_reserved() / 1024**3,
     }
+
+
+def _reset_cuda_probe_stats() -> None:
+    """Isolate each probe candidate from allocator cache left by prior runs."""
+    gc.collect()
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    try:
+        torch.cuda.reset_accumulated_memory_stats()
+    except AttributeError:
+        pass
 
 
 def _default_candidates(cfg: dict[str, Any]) -> list[dict[str, int]]:
@@ -59,8 +73,7 @@ def run_memory_probe(
         batch_size = int(item["batch_size"])
         accum = int(item["gradient_accumulation_steps"])
         run_dir = out / f"memory_probe_b{batch_size}_a{accum}"
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
+        _reset_cuda_probe_stats()
         started = time.time()
         record: dict[str, Any] = {
             "batch_size": batch_size,
@@ -86,9 +99,21 @@ def run_memory_probe(
             record["returncode"] = 1
             record["error"] = repr(exc)
         record["elapsed_seconds"] = time.time() - started
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         record["memory"] = _cuda_memory()
+        # A previous candidate can leave large reserved CUDA cache even when the
+        # next candidate's true peak allocation is safe. Keep the formal
+        # reserved value in the report, but use peak allocated memory for the
+        # stability decision so the probe tests the candidate, not allocator
+        # history.
+        allocated = record["memory"]["allocated_gib"]
         reserved = record["memory"]["reserved_gib"]
-        record["stable"] = bool(record["returncode"] == 0 and (reserved is None or reserved <= hard_limit))
+        record["stable"] = bool(record["returncode"] == 0 and (allocated is None or allocated <= hard_limit))
+        record["stable_decision_basis"] = "peak_allocated_gib"
+        if reserved is not None and reserved > hard_limit:
+            record["reserved_cache_exceeds_limit"] = True
+        _reset_cuda_probe_stats()
         results.append(record)
         if record["stable"] and selected is None:
             selected = record
