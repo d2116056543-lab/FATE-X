@@ -27,4 +27,3 @@ def test_write_review_pass_is_blocked_while_formal_gates_have_blockers(tmp_path,
     blockers = (tmp_path / "formal_gate_blockers.json").read_text(encoding="utf-8")
     assert "TinyDirectImageVideoBackbone" in blockers
     assert "random frame tensors" in blockers
-
