@@ -1,1 +1,3 @@
 configs/acpr_flowcal_pp_v1_bddx_32f_224.yaml text eol=lf
+.codex/skills/acpr-flowcal-pp-implementation-audit/SKILL.md text eol=lf
+docs/runbooks/ACPR_FlowCalPP_V1_Implementation_Plan.md text eol=lf
