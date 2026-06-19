@@ -4,12 +4,14 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
 
 from fate_x.acpr_flow.model import ACPRFlowModel, ACPRFlowModelConfig
 from fate_x.acpr_flow.online_reason_target import build_action_residual_reason_target
+from fate_x.acpr_flow.sequence_calalign import SequenceCalAlign
 from fate_x.engine.acpr_bddx_data import (
     _import_bert_tokenizer,
     adapt_batch_to_acpr_flow_batch,
@@ -17,6 +19,9 @@ from fate_x.engine.acpr_bddx_data import (
     build_bddx_acpr_dataloader,
 )
 from fate_x.utils.acpr_flow_config import load_acpr_flow_config
+from fate_x.utils.acpr_flow_artifacts import write_json
+from src.layers.bert import BertForImageCaptioning
+from src.modeling.load_bert import get_bert_model
 
 
 def build_acpr_optimizer_groups(model: ACPRFlowModel) -> tuple[list[dict], dict[str, str]]:
@@ -27,6 +32,7 @@ def build_acpr_optimizer_groups(model: ACPRFlowModel) -> tuple[list[dict], dict[
         "temporal_seca": 5e-5,
         "reason_control_adapter": 2e-5,
         "prefix_future_head": 5e-5,
+        "hardpair": 5e-5,
         "backbone": 5e-6,
         "control_base": 1e-5,
         "control_hidden": 1e-5,
@@ -36,8 +42,18 @@ def build_acpr_optimizer_groups(model: ACPRFlowModel) -> tuple[list[dict], dict[
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        matched = next((p for p in lr_by_prefix if name.startswith(p)), "new_modules")
-        lr = lr_by_prefix.get(matched, 1e-4)
+        if name.startswith("captioning_model.bert.encoder.layer.10") or name.startswith("captioning_model.bert.encoder.layer.11"):
+            matched = "bert_last2"
+            lr = 1e-5
+        elif name.startswith("captioning_model"):
+            matched = "bert_last2"
+            lr = 1e-5
+        elif name.startswith("hardpair"):
+            matched = "hardpair_projection"
+            lr = lr_by_prefix["hardpair"]
+        else:
+            matched = next((p for p in lr_by_prefix if name.startswith(p)), "new_modules")
+            lr = lr_by_prefix.get(matched, 1e-4)
         groups.setdefault(lr, {"params": [], "lr": lr, "names": []})
         groups[lr]["params"].append(param)
         groups[lr]["names"].append(name)
@@ -100,13 +116,44 @@ def build_model_config(cfg: dict[str, Any], load_pretrained_backbone: bool = Tru
         formal_backbone=True,
         load_pretrained_backbone=load_pretrained_backbone,
         video_swin_checkpoint=paths.get("video_swin_checkpoint"),
+        bert_img_feature_dim=int(cfg.get("data", {}).get("img_feature_dim", 512)),
         fine_stage=int(multiscale.get("fine_stage", 2)),
         coarse_stage=int(multiscale.get("coarse_stage", 3)),
         use_transport=True,
         use_flow=True,
         use_prefix_future=True,
         invalid_control_value=float(cfg.get("data", {}).get("invalid_control_value", -1.0)),
+        hardpair_queue_size=int(model_cfg.get("hardpair", {}).get("queue_size", 4096)),
+        hardpair_margin=float(model_cfg.get("hardpair", {}).get("margin", 0.20)),
+        hardpair_max_pairs_per_batch=int(model_cfg.get("hardpair", {}).get("max_pairs_per_batch", 64)),
+        hardpair_pair_weight=float(model_cfg.get("hardpair", {}).get("pair_weight", 0.03)),
+        hardpair_pair_budget_ratio=float(model_cfg.get("hardpair", {}).get("pair_budget_ratio", 0.08)),
     )
+
+
+def build_formal_captioning_model(cfg: dict[str, Any], device: str | torch.device) -> BertForImageCaptioning:
+    """Load the original ADAPT BertForImageCaptioning used by the formal text path."""
+    data = cfg.get("data", {})
+    args = SimpleNamespace(
+        config_name="",
+        model_name_or_path=cfg["paths"]["bert_dir"],
+        tokenizer_name="",
+        do_lower_case=True,
+        drop_out=0.1,
+        tie_weights=True,
+        freeze_embedding=False,
+        label_smoothing=0.0,
+        drop_worst_ratio=0.0,
+        drop_worst_after=0,
+        img_feature_dim=int(data.get("img_feature_dim", 512)),
+        num_hidden_layers=-1,
+        hidden_size=-1,
+        num_attention_heads=-1,
+        intermediate_size=-1,
+        load_partial_weights=True,
+    )
+    model, _, _ = get_bert_model(args)
+    return model.to(device)
 
 
 def load_formal_checkpoints(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -203,6 +250,34 @@ def build_reason_semantic_target_for_batch(
     ).detach()
 
 
+def run_sequence_calalign_stage(
+    output_dir: str | Path,
+    sample_ids: list[str],
+    base_logits: torch.Tensor,
+    enhanced_logits: torch.Tensor,
+    targets: torch.Tensor,
+) -> Path:
+    """Fit Sequence-CalAlign on deterministic train-calib ids and write an audit artifact."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if not all(str(s).startswith("train_calib_") for s in sample_ids):
+        raise ValueError("Sequence-CalAlign stage may only fit deterministic train_calib sample ids")
+    fitter = SequenceCalAlign(sample_ids)
+    scales = fitter.fit(sample_ids, base_logits, enhanced_logits, targets)
+    artifact = out / "sequence_calalign_audit.json"
+    write_json(
+        artifact,
+        {
+            **scales.__dict__,
+            "fit_split": "train_calib",
+            "fit_uses_test": fitter.fit_uses_test,
+            "zero_alpha_candidate": True,
+            "sample_count": len(sample_ids),
+        },
+    )
+    return artifact
+
+
 def train_formal(
     config: str,
     output_dir: str,
@@ -219,7 +294,11 @@ def train_formal(
     (out / "formal_suite_plan.json").write_text(json.dumps(suite, indent=2), encoding="utf-8")
     checkpoint_report = load_formal_checkpoints(cfg)
     (out / "checkpoint_load_report.json").write_text(json.dumps(checkpoint_report, indent=2), encoding="utf-8")
-    model = ACPRFlowModel(build_model_config(cfg, load_pretrained_backbone=load_pretrained_backbone)).to(device)
+    captioning_model = build_formal_captioning_model(cfg, device)
+    model = ACPRFlowModel(
+        build_model_config(cfg, load_pretrained_backbone=load_pretrained_backbone),
+        captioning_model=captioning_model,
+    ).to(device)
     groups, manifest = build_acpr_optimizer_groups(model)
     opt = torch.optim.AdamW(groups, weight_decay=float(cfg.get("optimization", {}).get("weight_decay", {}).get("new_modules", 0.01)))
     (out / "optimizer_group_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

@@ -19,8 +19,16 @@ class TemporalHardPairQueue(nn.Module):
 
     @torch.no_grad()
     def enqueue(self, reason_target: Tensor, action_embedding: Tensor) -> None:
-        self.reason_target_queue = torch.cat([self.reason_target_queue, reason_target.detach().cpu()], dim=0)[-self.queue_size:]
-        self.action_queue = torch.cat([self.action_queue, action_embedding.detach().cpu()], dim=0)[-self.queue_size:]
+        reason_target = reason_target.detach().to(
+            device=self.reason_target_queue.device,
+            dtype=self.reason_target_queue.dtype,
+        )
+        action_embedding = action_embedding.detach().to(
+            device=self.action_queue.device,
+            dtype=self.action_queue.dtype,
+        )
+        self.reason_target_queue = torch.cat([self.reason_target_queue, reason_target], dim=0)[-self.queue_size:]
+        self.action_queue = torch.cat([self.action_queue, action_embedding], dim=0)[-self.queue_size:]
 
     def forward(self, predicted_reason: Tensor, reason_target: Tensor, action_embedding: Tensor,
                 base_loss: Tensor | None = None) -> dict[str, Tensor]:

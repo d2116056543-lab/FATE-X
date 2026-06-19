@@ -29,12 +29,13 @@ def test_write_review_pass_is_blocked_while_formal_gates_have_blockers(tmp_path,
     assert "formal review pass requires cuda direct-image execution" in blockers
     assert "missing formal preflight evidence: gate_b_direct_image_8step_smoke.json" in blockers
     assert "missing formal preflight evidence: gate_d_mechanism_overfit_128_report.json" in blockers
-    assert "Temporal HardPair is not integrated into the formal model/trainer path" in blockers
-    assert "Sequence-CalAlign is not integrated into the formal trainer/evaluator path" in blockers
-    assert "formal model/trainer does not route text generation through BertForImageCaptioning ACPR SECA hook" in blockers
+    assert "Temporal HardPair is not integrated into the formal model/trainer path" not in blockers
+    assert "Sequence-CalAlign is not integrated into the formal trainer/evaluator path" not in blockers
+    assert "formal model/trainer does not route text generation through BertForImageCaptioning ACPR SECA hook" not in blockers
     assert "missing formal preflight evidence: foreground_supervisor_smoke.json" in blockers
     assert "missing_gate_b_8_step_direct_image_smoke" in blockers
     assert "missing_gate_c_gradient_chain" in blockers
     assert "missing_gate_d_128_sample_mechanism_overfit" in blockers
-    assert "missing_hardpair_integration" in blockers
-    assert "missing_sequence_calalign_integration" in blockers
+    assert "missing_hardpair_integration" not in blockers
+    assert "missing_sequence_calalign_integration" not in blockers
+    assert "formal_path_not_using_bert_captioning_seca" not in blockers

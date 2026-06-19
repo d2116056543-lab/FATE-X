@@ -159,12 +159,15 @@ def run_audit(config: str, output_dir: str, device: str = "cpu", write_review_pa
     frames = torch.randn(1, 32, 3, 224, 224, device=device)
     control_targets = torch.zeros(1, 32, 2, device=device)
     masked_ids = torch.zeros(1, 16, dtype=torch.long, device=device)
+    reason_target = torch.nn.functional.normalize(torch.ones(1, 768, device=device), dim=-1)
+    model.hardpair.enqueue(-reason_target.detach(), reason_target.detach())
     result = model(
         frames,
         control_targets=control_targets,
         masked_ids=masked_ids,
         raw_actions=["the car slows down"],
         raw_justifications=["cars ahead are stopped"],
+        reason_semantic_target=reason_target,
     )
     result.total_loss.backward()
     grad_report = {
@@ -173,6 +176,7 @@ def run_audit(config: str, output_dir: str, device: str = "cpu", write_review_pa
         "reason_memory": float(model.reason_memory.local_proj.weight.grad.detach().abs().sum().cpu()),
         "seca_gate_action": float(model.temporal_seca.gamma_action_raw.grad.detach().abs().sum().cpu()),
         "control_gate": float(model.reason_control_adapter.gate_raw.grad.detach().abs().sum().cpu()),
+        "hardpair_projection": float(model.hardpair.proj.weight.grad.detach().abs().sum().cpu()),
     }
     with torch.no_grad():
         cf = model(frames, intervention=InterventionSpec(kind="temporal_reverse"))

@@ -16,6 +16,7 @@ from .local_partial_transport import LocalPartialTransport
 from .prefix_future_head import PrefixFutureHead
 from .reason_control_adapter import ReasonControlAdapter
 from .reason_memory import ReasonMemory
+from .temporal_hard_pair import TemporalHardPairQueue
 from .temporal_predicate_field import TemporalPredicateEmbeddingField
 from .temporal_seca import TemporalSECA
 from .types import ACPRFlowBatch, ACPRFlowBundle, ACPRFlowTrainOutput
@@ -36,7 +37,13 @@ class ACPRFlowModelConfig:
     use_flow: bool = True
     use_prefix_future: bool = True
     vocab_size: int = 30522
+    bert_img_feature_dim: int = 512
     invalid_control_value: float = -1.0
+    hardpair_queue_size: int = 4096
+    hardpair_margin: float = 0.20
+    hardpair_max_pairs_per_batch: int = 64
+    hardpair_pair_weight: float = 0.03
+    hardpair_pair_budget_ratio: float = 0.08
 
 
 class TinyDirectImageVideoBackbone(nn.Module):
@@ -81,9 +88,15 @@ class TinyDirectImageVideoBackbone(nn.Module):
 
 
 class ACPRFlowModel(nn.Module):
-    def __init__(self, config: ACPRFlowModelConfig | None = None, backbone: nn.Module | None = None) -> None:
+    def __init__(
+        self,
+        config: ACPRFlowModelConfig | None = None,
+        backbone: nn.Module | None = None,
+        captioning_model: nn.Module | None = None,
+    ) -> None:
         super().__init__()
         self.config = config or ACPRFlowModelConfig()
+        self.captioning_model = captioning_model
         if backbone is not None:
             self.backbone = backbone
         elif self.config.formal_backbone:
@@ -104,6 +117,15 @@ class ACPRFlowModel(nn.Module):
         self.temporal_seca = TemporalSECA(self.config.text_hidden_dim)
         self.reason_control_adapter = ReasonControlAdapter(self.config.text_hidden_dim, signals=2)
         self.prefix_future_head = PrefixFutureHead(self.config.text_hidden_dim, signals=2)
+        self.hardpair = TemporalHardPairQueue(
+            hidden_dim=self.config.text_hidden_dim,
+            queue_size=self.config.hardpair_queue_size,
+            margin=self.config.hardpair_margin,
+            max_pairs_per_batch=self.config.hardpair_max_pairs_per_batch,
+            pair_budget_ratio=self.config.hardpair_pair_budget_ratio,
+        )
+        self.hardpair_pair_weight = float(self.config.hardpair_pair_weight)
+        self.bert_img_proj = nn.LazyLinear(self.config.bert_img_feature_dim)
         self.reason_to_action = nn.Linear(self.config.text_hidden_dim, self.config.vocab_size)
         self.reason_to_explanation = nn.Linear(self.config.text_hidden_dim, self.config.vocab_size)
         self.base_lm = nn.Linear(self.config.text_hidden_dim, self.config.vocab_size)
@@ -217,6 +239,99 @@ class ACPRFlowModel(nn.Module):
             return pred.abs().mean()
         return masked_l2_loss(pred, future_control_targets.to(device=pred.device, dtype=pred.dtype), self.config.invalid_control_value)
 
+    def _fallback_text_losses(self, bundle: ACPRFlowBundle, masked_ids: Tensor | None) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        b = bundle.global_reason_state.shape[0]
+        text_hidden = bundle.global_reason_state.unsqueeze(1).expand(b, 16, -1)
+        baseline_masked_logits = self.base_lm(text_hidden)
+        enhanced_hidden, seca_info = self.temporal_seca(text_hidden, bundle.reason_memory, text_len=text_hidden.shape[1])
+        bundle.token_reason_attention = seca_info["token_reason_attention"]
+        bundle.token_delta = seca_info["token_delta"]
+        enhanced_masked_logits = self.base_lm(enhanced_hidden)
+        action_logits = enhanced_masked_logits + 0.01 * self.reason_to_action(enhanced_hidden)
+        explanation_logits = enhanced_masked_logits + 0.01 * self.reason_to_explanation(enhanced_hidden)
+        action_loss = self._masked_token_loss(action_logits, masked_ids)
+        explanation_loss = self._masked_token_loss(explanation_logits, masked_ids)
+        return action_loss, explanation_loss, baseline_masked_logits, enhanced_masked_logits
+
+    def _bert_image_features(self, grids: dict[str, Tensor], bundle: ACPRFlowBundle) -> Tensor:
+        dense = grids.get("dense_tokens")
+        if dense is None:
+            dense = bundle.fused_grid.reshape(bundle.fused_grid.shape[0], -1, bundle.fused_grid.shape[-1])
+        return self.bert_img_proj(dense.to(dtype=bundle.global_reason_state.dtype))
+
+    @staticmethod
+    def _attention_for_captioning(input_ids: Tensor, img_feats: Tensor, attention_mask: Tensor | None) -> Tensor:
+        total = int(input_ids.shape[1] + img_feats.shape[1])
+        if attention_mask is None or attention_mask.shape[-1] != total:
+            return input_ids.new_ones((input_ids.shape[0], total, total), dtype=torch.float32)
+        return attention_mask
+
+    def _split_caption_losses(
+        self,
+        logits: Tensor,
+        masked_ids: Tensor,
+        masked_pos: Tensor,
+        token_type_ids: Tensor | None,
+    ) -> tuple[Tensor, Tensor]:
+        masked_pos_bool = masked_pos.bool()
+        if token_type_ids is None:
+            selected_types = masked_ids.new_zeros(int(masked_pos_bool.sum().item()))
+        else:
+            selected_types = token_type_ids[:, : masked_pos.shape[-1]][masked_pos_bool]
+        if masked_ids.shape == masked_pos.shape:
+            selected_ids = masked_ids[masked_pos_bool]
+        else:
+            # ADAPT/BDD-X stores masked_ids as a compact max-masked-token list,
+            # while masked_pos remains a text-position mask used by BERT.
+            selected_ids = masked_ids.reshape(-1)
+        selected_ids = selected_ids[selected_ids.ge(0)]
+        n = min(int(logits.shape[0]), int(selected_ids.shape[0]), int(selected_types.shape[0]))
+        selected_ids = selected_ids[:n].to(device=logits.device, dtype=torch.long)
+        selected_types = selected_types[:n].to(device=logits.device)
+        logits = logits[:n]
+
+        def _loss_for(mask: Tensor) -> Tensor:
+            if selected_ids.numel() == 0 or not bool(mask.any()):
+                return logits.sum() * 0.0
+            return F.cross_entropy(logits[mask].float(), selected_ids[mask])
+
+        return _loss_for(selected_types.eq(0)), _loss_for(selected_types.ne(0))
+
+    def _captioning_text_losses(
+        self,
+        batch: ACPRFlowBatch,
+        grids: dict[str, Tensor],
+        bundle: ACPRFlowBundle,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        if self.captioning_model is None or batch.input_ids is None or batch.masked_pos is None or batch.masked_ids is None:
+            return self._fallback_text_losses(bundle, batch.masked_ids)
+        input_ids = batch.input_ids
+        img_feats = self._bert_image_features(grids, bundle)
+        attention_mask = self._attention_for_captioning(input_ids, img_feats, batch.attention_mask)
+        common = dict(
+            input_ids=input_ids,
+            img_feats=img_feats,
+            attention_mask=attention_mask,
+            masked_pos=batch.masked_pos,
+            masked_ids=batch.masked_ids,
+            token_type_ids=batch.token_type_ids,
+            is_training=True,
+        )
+        _, baseline_logits = self.captioning_model(**common)
+        _, enhanced_logits = self.captioning_model(
+            **common,
+            acpr_flow_bundle=bundle,
+            acpr_temporal_seca=self.temporal_seca,
+            acpr_text_len=batch.masked_pos.shape[-1],
+        )
+        action_loss, explanation_loss = self._split_caption_losses(
+            enhanced_logits,
+            batch.masked_ids,
+            batch.masked_pos,
+            batch.token_type_ids,
+        )
+        return action_loss, explanation_loss, baseline_logits, enhanced_logits
+
     def forward(self, frames: Tensor | None = None, control_targets: Tensor | None = None,
                 intervention: InterventionSpec | None = None, batch: ACPRFlowBatch | None = None,
                 masked_ids: Tensor | None = None, raw_actions: list[str] | None = None,
@@ -227,24 +342,31 @@ class ACPRFlowModel(nn.Module):
         frames, control_targets, masked_ids, raw_actions, raw_justifications = self._resolve_inputs(
             frames, batch, control_targets, masked_ids, raw_actions, raw_justifications
         )
-        bundle = self.build_bundle(frames, intervention=intervention, precomputed_grids=precomputed_grids)
+        grids = precomputed_grids or self.backbone(frames)
+        bundle = self.build_bundle(frames, intervention=intervention, precomputed_grids=grids)
         b = frames.shape[0]
-        text_hidden = bundle.global_reason_state.unsqueeze(1).expand(b, 16, -1)
-        baseline_masked_logits = self.base_lm(text_hidden)
-        enhanced_hidden, seca_info = self.temporal_seca(text_hidden, bundle.reason_memory, text_len=text_hidden.shape[1])
-        bundle.token_reason_attention = seca_info["token_reason_attention"]
-        bundle.token_delta = seca_info["token_delta"]
-        enhanced_masked_logits = self.base_lm(enhanced_hidden)
+        action_loss, explanation_loss, baseline_masked_logits, enhanced_masked_logits = self._captioning_text_losses(
+            ACPRFlowBatch(
+                input_ids=batch.input_ids if batch is not None else None,
+                attention_mask=batch.attention_mask if batch is not None else None,
+                token_type_ids=batch.token_type_ids if batch is not None else None,
+                frames=frames,
+                masked_pos=batch.masked_pos if batch is not None else None,
+                masked_ids=masked_ids,
+                car_info=batch.car_info if batch is not None else None,
+                sample_ids=list(batch.sample_ids) if batch is not None else [],
+                raw_actions=raw_actions,
+                raw_justifications=raw_justifications,
+            ),
+            grids,
+            bundle,
+        )
         control_hidden = self.control_hidden(bundle.global_reason_state).unsqueeze(1).expand(b, 32, -1)
         control_base = self.control_base(control_hidden)
         ctrl = self.reason_control_adapter(control_base, control_hidden, bundle.reason_memory)
         bundle.control_reason_attention = ctrl["control_reason_attention"]
         bundle.control_delta = ctrl["control_delta"]
         control_final = ctrl["control_final_prediction"]
-        action_logits = enhanced_masked_logits + 0.01 * self.reason_to_action(enhanced_hidden)
-        explanation_logits = enhanced_masked_logits + 0.01 * self.reason_to_explanation(enhanced_hidden)
-        action_loss = self._masked_token_loss(action_logits, masked_ids)
-        explanation_loss = self._masked_token_loss(explanation_logits, masked_ids)
         if control_targets is None:
             control_loss = control_final.sum() * 0.0
         else:
@@ -264,6 +386,20 @@ class ACPRFlowModel(nn.Module):
             text_targets["flow_reliability"],
         )
         reason_semantic = self._reason_semantic_loss(bundle.global_reason_state, reason_semantic_target)
+        reason_for_pair = (
+            F.normalize(reason_semantic_target.to(device=bundle.global_reason_state.device, dtype=bundle.global_reason_state.dtype), dim=-1)
+            if reason_semantic_target is not None
+            else F.normalize(bundle.global_reason_state.detach(), dim=-1)
+        )
+        hardpair = self.hardpair(
+            bundle.global_reason_state,
+            reason_for_pair,
+            reason_for_pair,
+            base_loss=action_loss + explanation_loss + control_loss,
+        )
+        if reason_semantic_target is not None:
+            self.hardpair.enqueue(reason_for_pair.detach(), reason_for_pair.detach())
+        hardpair_weighted = hardpair["hardpair_budgeted_loss"] * self.hardpair_pair_weight
         future_control = self._future_control_loss(bundle.global_reason_state, control_targets, future_control_targets)
         memory_diversity = memory_diversity_loss(bundle.reason_memory)
         auxiliary_loss = (
@@ -272,6 +408,7 @@ class ACPRFlowModel(nn.Module):
             + 0.03 * flow_pu
             + 0.05 * reason_semantic
             + 0.02 * future_control
+            + hardpair_weighted
         )
         total = action_loss + explanation_loss + control_loss + auxiliary_loss
         return ACPRFlowTrainOutput(
@@ -294,6 +431,11 @@ class ACPRFlowModel(nn.Module):
                 "reason_semantic": reason_semantic,
                 "future_control": future_control,
                 "memory_diversity": memory_diversity,
+                "hardpair_raw_loss": hardpair["hardpair_raw_loss"],
+                "hardpair_budgeted_loss": hardpair["hardpair_budgeted_loss"],
+                "hardpair_weighted_loss": hardpair_weighted,
+                "hardpair_active_pair_rate": hardpair["active_pair_rate"],
+                "hardpair_candidate_count": hardpair["candidate_count"],
                 "total": total,
             },
             bundle=bundle,
