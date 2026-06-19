@@ -1,0 +1,105 @@
+config_version: acpr_flowcal_pp_v1
+experiment_name: acpr_flowcal_pp_v1_bddx_32f_224
+protocol_tag: test_selected_user_requested
+repository:
+  expected_worktree: E:/sbw/FATE_Drive/fate_x_flowtrace_pmt_v1_worktree
+  expected_branch: flowtrace_pmt_v1
+  github_remote: github
+  require_clean_worktree: true
+  require_remote_sha_match: true
+paths:
+  train_yaml: datasets_part/BDDX/training_32frames.yaml
+  test_yaml: datasets/BDDX/testing_32frames.yaml
+  output_root: .background_runs
+  predicate_config: configs/acpr_flow_local_predicates.yaml
+  flow_factor_config: configs/acpr_flow_factors.yaml
+  text_rule_config: configs/acpr_flow_text_rules.yaml
+data:
+  max_num_frames: 32
+  image_resolution: 224
+  direct_image_training: true
+  feature_cache_enabled: false
+  token_cache_enabled: false
+  build_cache_before_training: false
+  use_sep_cap: true
+  train_calib_fraction: 0.10
+  train_calib_seed: 20260619
+  formal_eval_splits: [test]
+legacy:
+  legacy_flowtrace_v1_enabled: false
+  legacy_token_pmt_enabled: false
+  legacy_sinkhorn_transport_enabled: false
+  learn_mask_enabled: false
+model:
+  state_dim: 256
+  text_hidden_dim: 768
+  predicates:
+    num_predicates: 32
+    assignment: entmax15
+  flow:
+    total_factors: 13
+  reason_memory:
+    total_tokens: 46
+  seca:
+    enabled: true
+    text_hidden_only: true
+    hook_location: pre_lm_prediction_head
+  control_adapter:
+    enabled: true
+    direct_flow_bypass: false
+loss:
+  action_text: 1.0
+  explanation_text: 1.0
+  control: 0.05
+  predicate_pu: 0.05
+  flow_pu: 0.03
+  memory_diversity: 0.001
+optimization:
+  learning_rates:
+    predicate_field: 0.00010
+    flow_composer: 0.00010
+    reason_memory: 0.00010
+    hardpair_projection: 0.00005
+    temporal_seca: 0.00005
+    control_adapter: 0.00002
+    future_head: 0.00005
+    bert_last2: 0.00001
+    swin_last_stage: 0.000005
+    sensor_head: 0.00001
+experiment_suite:
+  baseline_eval:
+    enabled: true
+  common_stage_a:
+    method: acpr_x
+    epochs: 6
+  fork_b1_acpr_x:
+    train_epochs: 12
+    calibration_epochs: 3
+  fork_b2_acpr_flowcal_pp:
+    train_epochs: 12
+    calibration_epochs: 3
+sequence_calalign:
+  fit_split: train_calib
+  fit_uses_test: false
+evaluation:
+  after_every_epoch: true
+  eval_splits: [test]
+  best_selection_split: test
+  metric_based_early_stop: false
+  save_latest: true
+  save_best_test: true
+faithfulness:
+  teacher_forced_state_intervention: true
+  temporal_shuffle: true
+visualization:
+  canvas: true
+  dataset_atlas: true
+  save_png: true
+  save_json: true
+supervisor:
+  foreground_only: true
+  metric_based_stop: false
+  require_review_pass: true
+  require_clean_worktree: true
+  require_remote_sha_match: true
+  user_stop_sentinel: control/STOP_REQUESTED_BY_USER

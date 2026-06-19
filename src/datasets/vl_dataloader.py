@@ -62,6 +62,17 @@ def make_batch_data_sampler(sampler, images_per_gpu, num_iters=None, start_iter=
     return batch_sampler
 
 
+def acpr_flow_collate(batch):
+    """Preserve raw action/justification metadata while using PyTorch default collation."""
+    keys, examples, meta = zip(*batch)
+    collated_examples = torch.utils.data.default_collate(examples)
+    meta_out = {}
+    for item in meta:
+        for key, value in item.items():
+            meta_out.setdefault(key, []).append(value)
+    return list(keys), collated_examples, meta_out
+
+
 def _resolve_limited_samples(args, is_train=True, fallback_num_gpus=1):
     num_gpus = int(getattr(args, "num_gpus", fallback_num_gpus) or 1)
     num_gpus = max(1, num_gpus)
@@ -125,9 +136,10 @@ def make_data_loader(args, yaml_file, tokenizer, is_distributed=True,
     batch_sampler = make_batch_data_sampler(
         sampler, images_per_gpu, num_iters, start_iter
     )
+    collate_fn = acpr_flow_collate if getattr(args, "acpr_flow_preserve_meta", False) else None
     data_loader = torch.utils.data.DataLoader(
         dataset, num_workers=args.num_workers, batch_sampler=batch_sampler,
-        pin_memory=True, worker_init_fn=init_seeds,
+        pin_memory=True, worker_init_fn=init_seeds, collate_fn=collate_fn,
     )
     return data_loader
 

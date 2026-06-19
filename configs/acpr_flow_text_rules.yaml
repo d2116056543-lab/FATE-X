@@ -1,0 +1,15 @@
+version: acpr_flow_text_rules_v1
+unknown_negative_weight: 0.075
+rules:
+  - pattern: "traffic (is )?clear|road (is )?clear|open road"
+    positive: [road_clear, clear_open_flow]
+    contradictory: [road_crowded, queue_congestion]
+  - pattern: "cars? ahead|vehicle ahead|lead vehicle"
+    positive: [front_vehicle_close, lead_vehicle_group]
+    contradictory: [front_vehicle_far]
+  - pattern: "stopped|queue|congestion|crowded"
+    positive: [queue_congestion, road_crowded]
+    contradictory: [clear_open_flow, road_clear]
+  - pattern: "pedestrian|person|crosswalk"
+    positive: [pedestrian_front, crosswalk_region, vulnerable_obstacle_conflict]
+    contradictory: []

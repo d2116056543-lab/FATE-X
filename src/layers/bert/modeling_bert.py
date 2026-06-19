@@ -1709,7 +1709,8 @@ class BertForImageCaptioning(BertPreTrainedModel):
             masked_pos_img=None, masked_token_img=None,
             token_type_ids=None, position_ids=None, head_mask=None,
             is_training=True, encoder_history_states=None, car_info=None,
-            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0):
+            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0,
+            acpr_flow_bundle=None, acpr_temporal_seca=None, acpr_text_len=None):
         outputs = self.bert(input_ids, img_feats=img_feats, attention_mask=attention_mask,
                 position_ids=position_ids, token_type_ids=token_type_ids,
                 head_mask=head_mask,
@@ -1725,6 +1726,17 @@ class BertForImageCaptioning(BertPreTrainedModel):
             flowtrace_bundle.token_state_routing = pmt_info.get("token_state_routing")
             flowtrace_bundle.pmt_delta = pmt_info.get("pmt_delta")
             flowtrace_bundle.pmt_gate = pmt_info.get("pmt_gate")
+            outputs = (hidden,) + outputs[1:]
+        if acpr_flow_bundle is not None and acpr_temporal_seca is not None:
+            hidden, acpr_info = acpr_temporal_seca(
+                outputs[0],
+                acpr_flow_bundle.reason_memory,
+                token_type_ids=token_type_ids,
+                text_len=acpr_text_len,
+            )
+            acpr_flow_bundle.token_reason_attention = acpr_info.get("token_reason_attention")
+            acpr_flow_bundle.token_delta = acpr_info.get("token_delta")
+            acpr_flow_bundle.diagnostics["seca_image_hidden_max_diff"] = acpr_info.get("image_hidden_max_diff")
             outputs = (hidden,) + outputs[1:]
         if is_training:
             sequence_output = outputs[0][:, :masked_pos.shape[-1], :]
@@ -1866,7 +1878,10 @@ class BertForImageCaptioning(BertPreTrainedModel):
             'encoder_history_states': self.prev_encoded_layers,
             'flowtrace_bundle': getattr(self, 'flowtrace_bundle', None),
             'flowtrace_pmt_adapter': getattr(self, 'flowtrace_pmt_adapter', None),
-            'flowtrace_pmt_scale': getattr(self, 'flowtrace_pmt_scale', 1.0)}
+            'flowtrace_pmt_scale': getattr(self, 'flowtrace_pmt_scale', 1.0),
+            'acpr_flow_bundle': getattr(self, 'acpr_flow_bundle', None),
+            'acpr_temporal_seca': getattr(self, 'acpr_temporal_seca', None),
+            'acpr_text_len': getattr(self, 'acpr_text_len', None)}
 
     def get_output_embeddings(self):
         return self.decoder
@@ -1884,7 +1899,8 @@ class BertForImageCaptioning(BertPreTrainedModel):
             min_constraints_to_satisfy=None, use_hypo=False,
             decoding_constraint_flag=None, bad_ending_ids=None,
             car_info = None,
-            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0
+            flowtrace_bundle=None, flowtrace_pmt_adapter=None, flowtrace_pmt_scale=1.0,
+            acpr_flow_bundle=None, acpr_temporal_seca=None, acpr_text_len=None
             ):
         """ Generates captions given image features
         """
@@ -1897,6 +1913,9 @@ class BertForImageCaptioning(BertPreTrainedModel):
         self.flowtrace_bundle = flowtrace_bundle
         self.flowtrace_pmt_adapter = flowtrace_pmt_adapter
         self.flowtrace_pmt_scale = flowtrace_pmt_scale
+        self.acpr_flow_bundle = acpr_flow_bundle
+        self.acpr_temporal_seca = acpr_temporal_seca
+        self.acpr_text_len = acpr_text_len
         # NOTE: num_keep_best is not equavilant to num_return_sequences
         # num_keep_best is the number of hypotheses to keep in beam search
         # num_return_sequences is the repeating times of input, coupled with

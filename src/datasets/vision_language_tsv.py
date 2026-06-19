@@ -432,8 +432,18 @@ class VisionLanguageTSVDataset(object):
         meta_data = {}
         meta_data['caption'] = caption # raw text data, not tokenized
         meta_data['img_key'] = img_key
+        meta_data['sample_id'] = f"{img_key}:{cap_idx}"
         meta_data['is_video'] = is_video # True: video data, False: image data
         meta_data['tag'] = tag
+        if isinstance(caption_sample, dict):
+            meta_data['raw_action'] = caption_sample.get('action') or caption_sample.get('raw_action') or caption_sample.get('description') or ''
+            meta_data['raw_justification'] = caption_sample.get('justification') or caption_sample.get('explanation') or caption_sample.get('raw_justification') or caption_sample.get('caption') or ''
+        elif isinstance(caption, (list, tuple)):
+            meta_data['raw_action'] = caption[0] if len(caption) > 0 else ''
+            meta_data['raw_justification'] = caption[1] if len(caption) > 1 else ''
+        else:
+            meta_data['raw_action'] = str(tag or '')
+            meta_data['raw_justification'] = str(caption or '')
         example =  example + (car_infos,)
 
         return img_key, example, meta_data

@@ -1,0 +1,18 @@
+version: acpr_flow_factors_v1
+total_factors: 13
+regime:
+  - clear_open_flow
+  - stable_following
+  - dense_following
+  - queue_congestion
+phase:
+  - forming
+  - stable
+  - releasing
+  - oscillating
+source:
+  - traffic_signal
+  - lead_vehicle_group
+  - merge_lane_constraint
+  - turn_intersection
+  - vulnerable_obstacle_conflict

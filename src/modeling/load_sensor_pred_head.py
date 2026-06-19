@@ -49,6 +49,7 @@ class Sensor_Pred_Head(torch.nn.Module):
         """
         vid_feats = kwargs['img_feats']
         car_info  = kwargs['car_info']
+        return_hidden = kwargs.get('return_hidden', False)
 
         car_info = car_info.permute(0, 2, 1)
 
@@ -70,6 +71,8 @@ class Sensor_Pred_Head(torch.nn.Module):
 
         loss = self.get_l2_loss(pred_tensor, car_info)
 
+        if return_hidden:
+            return loss, pred_tensor, sequence_output
         return loss, pred_tensor
 
     def get_attn_mask(self, img_embedding_output):
