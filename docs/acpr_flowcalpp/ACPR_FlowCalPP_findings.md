@@ -114,6 +114,7 @@ strict epoch14 的 traffic audit 已经记录 `target_*_delta_corr` 和 `pred_*_
 | best checkpoint 单一 | 不方便区分 text/control/joint | 增加 best_text/best_control/best_adapt_joint/best_test | 已修复 |
 | traffic audit 无法证明模型是否使用因子 | `pred_speed_delta_corr`/`pred_course_delta_corr` 曾为 null | 补充 predicted control delta 统计和相关性 | 已修复，epoch14 有数值 |
 | course 角度 wrap-around | course delta 线性差分可能产生假大误差 | 加入 circular course delta 修复 | 代码已改，当前 run 未完成新 eval |
+| hardpair projection 无梯度 | `hardpair_raw_loss` 有记录，但 `model.hardpair.proj.weight.grad` 为 `None` | 定位为无 BERT embedding fallback 使用 predicted state，导致测试降级路径没有 eligible pair；改为 fallback 使用 `reason_for_pair` target | 已修复，相关单测和完整 ACPR 测试通过 |
 | 训练速度慢 | Windows/SSH/小 batch/评估耗时大 | 切到 WSL/Linux、batch 4、workers 4，并保留后台任务 | 已改善，但每轮仍受 eval 和 caption decoding 影响 |
 | 中途停止留下 tmp | 停止时正在写 ckpt | 标记 `.tmp` 为无效，仅用 `checkpoint_latest.pth` | 已记录 |
 

@@ -87,6 +87,16 @@
 
 临时排查脚本未列为正式代码，除非后续明确整理进 `scripts/` 或 `tools/`。
 
+## 提交前验证记录
+
+- `git diff --check` 初次发现 CRLF/尾随空白污染；已对本次提交范围规范化为 LF 并清理尾随空白。
+- ACPR 测试集合第一次结果：42 passed, 1 skipped, 1 failed。失败项是 hardpair projection 梯度为 `None`。
+- hardpair 根因：测试降级 captioning model 没有 BERT word embedding，action embedding fallback 使用 predicted `bundle.global_reason_state`，导致与队列 action embedding 相似度不足，没有 eligible hard pair，raw loss 变成不经过 projection 的零张量。
+- 修复：`action_for_pair = self._caption_action_target_embedding(batch, reason_for_pair)`。真实 ADAPT captioning 有 BERT embedding 时仍走 action-text embedding；无 BERT embedding 的测试/降级路径用 target fallback 保证 hardpair 梯度路径有效。
+- 单项验证：`tests/test_acpr_flow_formal_path_integrations.py::test_hardpair_loss_is_integrated_into_model_and_optimizer_group` 通过。
+- 完整验证：`pytest tests/test_acpr_action_text_eval.py tests/test_acpr_flow_adapt_cider_eval.py tests/test_acpr_flow_control_eval.py tests/test_acpr_flow_control_temporal_path.py tests/test_acpr_flow_dataloader_workers.py tests/test_acpr_flow_epoch_eval_resume.py tests/test_acpr_flow_eval_safety.py tests/test_acpr_flow_traffic_audit.py tests/test_acpr_flow_config_contract.py tests/test_acpr_flow_formal_path_integrations.py tests/test_acpr_flow_hardpair.py -q` 结果为 43 passed, 1 skipped。
+- GitHub push：`flowtrace_pmt_v1` 已推送到 `d2116056543-lab/FATE-X`，代码 commit `7f9f8af`。
+
 ## 当前有效文件
 
 - 远端三份记录目录：`E:\sbw\FATE_Drive\fate_x_flowtrace_pmt_v1_worktree\docs\acpr_flowcalpp\`
