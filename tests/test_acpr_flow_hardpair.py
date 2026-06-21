@@ -12,6 +12,27 @@ def test_hardpair_queue_caps_and_budget():
     assert out["hardpair_budgeted_loss"] <= 0.8 + 1e-6
 
 
+def test_hardpair_can_activate_for_same_action_different_reason():
+    q = TemporalHardPairQueue(hidden_dim=4, queue_size=4, pair_budget_ratio=0.08)
+    with torch.no_grad():
+        q.proj.weight.copy_(torch.eye(4))
+        q.proj.bias.zero_()
+    q.enqueue(
+        reason_target=torch.tensor([[1.0, 0.0, 0.0, 0.0]]),
+        action_embedding=torch.tensor([[0.0, 1.0, 0.0, 0.0]]),
+    )
+
+    out = q(
+        predicted_reason=torch.tensor([[0.0, 0.0, 1.0, 0.0]]),
+        reason_target=torch.tensor([[0.0, 0.0, 1.0, 0.0]]),
+        action_embedding=torch.tensor([[0.0, 1.0, 0.0, 0.0]]),
+        base_loss=torch.tensor(10.0),
+    )
+
+    assert out["candidate_count"].item() == 1
+    assert out["active_pair_rate"].item() == 1.0
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device queue regression requires GPU")
 def test_hardpair_enqueue_preserves_queue_device_after_cuda_move():
     q = TemporalHardPairQueue(hidden_dim=8, queue_size=4, pair_budget_ratio=0.08).cuda()

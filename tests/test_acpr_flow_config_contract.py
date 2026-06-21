@@ -1,5 +1,6 @@
 from fate_x.utils.acpr_flow_config import load_acpr_flow_config
 from fate_x.utils.acpr_flow_git_guard import _windows_gitdir_to_wsl
+from fate_x.engine import train_acpr_flowcal_pp
 
 
 def test_config_contract_for_direct_image_no_cache_no_legacy_and_full_plan_keys():
@@ -30,9 +31,28 @@ def test_config_contract_for_direct_image_no_cache_no_legacy_and_full_plan_keys(
     assert cfg["experiment_suite"]["fork_b2_acpr_flowcal_pp"]["transport_enabled"] is True
     assert cfg["sequence_calalign"]["fit_uses_test"] is False
     assert cfg["evaluation"]["eval_splits"] == ["test"]
-    assert cfg["evaluation"]["beam_size_formal"] == 3
+    # ADAPT sep-cap evaluation uses the default greedy beam setting; beam>1 ends at the first caption SEP in this codebase.
+    assert cfg["evaluation"]["beam_size_formal"] == 1
     assert cfg["evaluation"]["metric_based_early_stop"] is False
     assert cfg["supervisor"]["require_review_pass"] is True
+
+
+def test_build_model_config_carries_yaml_loss_weights_into_model_config():
+    cfg = load_acpr_flow_config("configs/acpr_flowcal_pp_v1_bddx_32f_224.yaml")
+    cfg["loss"] = dict(cfg["loss"])
+    cfg["loss"]["control"] = 0.123
+    cfg["loss"]["future_control"] = 0.045
+
+    model_cfg = train_acpr_flowcal_pp.build_model_config(cfg, load_pretrained_backbone=False)
+
+    assert model_cfg.loss_weights["action_text"] == 1.0
+    assert model_cfg.loss_weights["explanation_text"] == 1.0
+    assert model_cfg.loss_weights["control"] == 0.123
+    assert model_cfg.loss_weights["predicate_pu"] == 0.05
+    assert model_cfg.loss_weights["flow_pu"] == 0.03
+    assert model_cfg.loss_weights["reason_semantic"] == 0.05
+    assert model_cfg.loss_weights["future_control"] == 0.045
+    assert model_cfg.loss_weights["memory_diversity"] == 0.001
 
 
 def test_git_guard_converts_windows_worktree_gitdir_to_wsl_path():

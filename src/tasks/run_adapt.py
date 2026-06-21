@@ -363,20 +363,20 @@ def mixed_precision_init(args, model):
     no_decay_bert_param_tp = [(n, p) for n, p in no_decay_param_tp if "swin." not in n]
 
     weight_decay = 0.2
-    coef_lr = args.backbone_coef_lr 
+    coef_lr = args.backbone_coef_lr
     optimizer_grouped_parameters = [
-        {'params': [p for n, p in decay_swin_param_tp], 
+        {'params': [p for n, p in decay_swin_param_tp],
             'weight_decay': weight_decay,
             'lr': args.learning_rate * coef_lr},
-        {'params': [p for n, p in decay_bert_param_tp], 
+        {'params': [p for n, p in decay_bert_param_tp],
             'weight_decay': weight_decay},
         {'params': [p for n, p in no_decay_swin_param_tp],
             'weight_decay': 0.0,
             'lr': args.learning_rate * coef_lr},
-        {'params': [p for n, p in no_decay_bert_param_tp], 
+        {'params': [p for n, p in no_decay_bert_param_tp],
             'weight_decay': 0.0}
     ]
-    
+
     if args.mixed_precision_method == "fairscale":
         from fairscale.optim.oss import OSS
         optimizer = OSS(
@@ -392,7 +392,7 @@ def mixed_precision_init(args, model):
     else:
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer, step_size=int(max_iter/2.0), gamma=0.1)
-    
+
     if args.mixed_precision_method == "deepspeed":
         if deepspeed is None:
             raise RuntimeError(
@@ -546,7 +546,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
 
         running_loss(loss.item())
         running_batch_acc(batch_acc.item())
-        
+
         # backward pass
         backward_now = iteration % args.gradient_accumulation_steps == 0
         loss_for_backward = loss if args.mixed_precision_method == "deepspeed" else loss / float(args.gradient_accumulation_steps)
@@ -585,7 +585,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                 "train/lr_lm", lr_LM, global_step)
             TB_LOGGER.add_scalar(
                 "train/ls_visBone", lr_VisBone, global_step)
-            
+
             if args.max_grad_norm != -1:
                 grad_params = (
                     amp.master_params(optimizer)
@@ -610,7 +610,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
             restorer.step()
 
         batch_time = time.time() - end
-        
+
         if backward_now:
             if global_step % args.logging_steps == 0 or global_step == max_global_step:
                 if 'time_info' in meters.meters:
@@ -646,14 +646,14 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
 
             if (args.save_steps > 0 and global_step % args.save_steps == 0) or global_step == max_global_step or global_step == 1:
                 epoch = global_step // global_iters_per_epoch
-                
+
                 checkpoint_dir = op.join(args.output_dir, 'checkpoint-{}-{}'.format(
                     epoch, global_step))
                 if get_world_size() > 1:
                     dist.barrier()
 
                 if get_world_size() > 1:
-                    dist.barrier()    
+                    dist.barrier()
                 if is_main_process():
                     pre_eval_meta = {
                         'tag': 'checkpoint_latest',
@@ -722,7 +722,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                             val_log = {f'valid/{k}': v for k,v in res.items()}
                             TB_LOGGER.log_scalar_dict(val_log)
                             aml_run.log(name='CIDEr', value=float(res['CIDEr']))
-                            
+
                             best_score = max(best_score, res['CIDEr'])
                             res['epoch'] = epoch
                             res['iteration'] = iteration
@@ -754,7 +754,7 @@ def train(args, train_dataloader, val_dataloader, model, tokenizer, training_sav
                                     training_saver, args, 'checkpoint_best',
                                     global_step, model, optimizer, best_meta)
                     if get_world_size() > 1:
-                        dist.barrier()                
+                        dist.barrier()
 
         if iteration > 2:
             meters.update(
@@ -888,7 +888,7 @@ def test(args, test_dataloader, model, tokenizer, predict_file):
 
                 tic = time.time()
                 # captions, logprobs
-                
+
                 if getattr(args, 'deepspeed_bf16', False):
                     # deepspeed does not auto cast inputs.
                     inputs = fp32_to_bf16(inputs)
@@ -959,7 +959,7 @@ def signal_evaluate(args, val_dataloader, model, tokenizer, output_dir):
         tokenizer.convert_tokens_to_ids([tokenizer.cls_token, tokenizer.sep_token,
         tokenizer.pad_token, tokenizer.mask_token, '.'])
     world_size = get_world_size()
-    
+
     cache_file = predict_file
 
     model.eval()
@@ -1010,7 +1010,7 @@ def signal_evaluate(args, val_dataloader, model, tokenizer, output_dir):
                     "num_keep_best": args.num_keep_best,
                 }
 
-                
+
                 if getattr(args, 'deepspeed_bf16', False):
                     # deepspeed does not auto cast inputs.
                     inputs = fp32_to_bf16(inputs)
@@ -1113,11 +1113,11 @@ def check_arguments(args):
     basic_check_arguments(args)
     # additional sanity check:
     args.max_img_seq_length = int((args.max_num_frames/2)*(int(args.img_res)/32)*(int(args.img_res)/32))
-    
+
     if args.freeze_backbone or args.backbone_coef_lr == 0:
         args.backbone_coef_lr = 0
         args.freeze_backbone = True
-    
+
     if 'reload_pretrained_swin' not in args.keys():
         args.reload_pretrained_swin = False
 
@@ -1128,11 +1128,11 @@ def check_arguments(args):
     validate_fate_x_mask_compatibility(args)
     apply_lr_scaling_to_args(args)
 
-    if args.learn_mask_enabled==True and args.attn_mask_type != 'learn_without_crossattn' and args.attn_mask_type != 'learn_with_swap_crossattn': 
+    if args.learn_mask_enabled==True and args.attn_mask_type != 'learn_without_crossattn' and args.attn_mask_type != 'learn_with_swap_crossattn':
         args.attn_mask_type = 'learn_vid_att'
 
 def update_existing_config_for_inference(args):
-    ''' load adapt args for evaluation and inference 
+    ''' load adapt args for evaluation and inference
     '''
     assert args.do_test or args.do_eval
     checkpoint = args.eval_model_dir
@@ -1213,26 +1213,27 @@ def get_custom_args(base_config):
 
 def main(args):
     if args.do_train==False or args.do_eval==True:
-        args = update_existing_config_for_inference(args) 
+        args = update_existing_config_for_inference(args)
 
     args.device = torch.device(args.device)
 
     dist_init(args)
     logger.info("Setup CUDA, GPU & distributed training")
-    
+
     check_arguments(args)
     logger.info("Check arguments")
 
-    if args.resume_repro_checkpoint_dir and args.resume_repro_checkpoint_dir != 'None':
-        args.resume_checkpoint = op.join(args.resume_repro_checkpoint_dir, 'model.bin')
-        logger.info(f"Resume repro checkpoint dir: {args.resume_repro_checkpoint_dir}")
+    resume_repro_checkpoint_dir = getattr(args, 'resume_repro_checkpoint_dir', '')
+    if resume_repro_checkpoint_dir and resume_repro_checkpoint_dir != 'None':
+        args.resume_checkpoint = op.join(resume_repro_checkpoint_dir, 'model.bin')
+        logger.info(f"Resume repro checkpoint dir: {resume_repro_checkpoint_dir}")
         logger.info(f"Resume repro model checkpoint: {args.resume_checkpoint}")
 
     mkdir(args.output_dir)
     logger.info(f"creating output_dir at: {args.output_dir}")
 
     set_seed(args.seed, args.num_gpus)
-    
+
     if args.mixed_precision_method == "apex":
         fp16_trainning = f"apex O{args.amp_opt_level}"
     elif args.mixed_precision_method == "deepspeed":
@@ -1266,10 +1267,10 @@ def main(args):
     logger.info(f"Cuda version is: {torch.version.cuda}")
     logger.info(f"cuDNN version is : {torch.backends.cudnn.version()}" )
 
-    # Get Video Swin backbone 
+    # Get Video Swin backbone
     swin_model = get_swin_model(args)
 
-    # Get BERT and tokenizer for DCG (Driving Caption Generation) 
+    # Get BERT and tokenizer for DCG (Driving Caption Generation)
     bert_model, config, tokenizer = get_bert_model(args)
 
     # build ADAPT based on training configs
@@ -1303,7 +1304,7 @@ def main(args):
 
             #-------------------------------------------------------------
             # transfer at the same frame rate
-            if pretrained_mask_shape==init_mask_shape: 
+            if pretrained_mask_shape==init_mask_shape:
                 # init using entire pre-trained ADAPT weights
                 if args.transfer_method==0:
                     load_compatible_state_dict(vl_transformer, pretrained_model, context="pretrained_checkpoint_mask")
@@ -1312,7 +1313,7 @@ def main(args):
                     vl_transformer.reload_attn_mask(pretrained_model['learn_vid_att.weight'])
             #-------------------------------------------------------------
             # transfer across different frame rates
-            else:  
+            else:
                 # init using entire pre-trained ADAPT weights, except sparse attn mask
                 if args.transfer_method==0:
                     if isinstance(pretrained_model, dict):
@@ -1331,13 +1332,13 @@ def main(args):
                         load_compatible_state_dict(vl_transformer, new_state_dict, context="pretrained_checkpoint_mask_transfer")
                         del new_state_dict
 
-                # expand pre-trained sparse att mask to the desired size          
+                # expand pre-trained sparse att mask to the desired size
                 if args.att_mask_expansion==0:
                     vl_transformer.diag_based_init_attn_mask(pretrained_model['learn_vid_att.weight'])
                 elif args.att_mask_expansion==1:
                     vl_transformer.bilinear_init_attn_mask(pretrained_model['learn_vid_att.weight'])
                 else:
-                    vl_transformer.random_init_attn_mask()                                                                          
+                    vl_transformer.random_init_attn_mask()
 
         del pretrained_model
         gc.collect()
@@ -1353,7 +1354,7 @@ def main(args):
             vl_transformer.swin = reload_pretrained_swin(vl_transformer.swin, args)
 
     vl_transformer.to(args.device)
-    
+
     if args.do_train:
         args = restore_training_settings(args)
         train_dataloader = make_data_loader(args, args.train_yaml, tokenizer, args.distributed, is_train=True)
@@ -1386,7 +1387,7 @@ def main(args):
             signal_evaluate(args, val_dataloader, vl_transformer, tokenizer, args.eval_model_dir)
         else:
             evaluate_file = evaluate(args, val_dataloader, vl_transformer, tokenizer, args.eval_model_dir)
-    
+
     if args.distributed:
         dist.destroy_process_group()
 

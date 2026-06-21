@@ -146,3 +146,30 @@ def test_sequence_calalign_stage_writes_train_calib_only_artifact(tmp_path):
     assert data["fit_split"] == "train_calib"
     assert data["fit_uses_test"] is False
     assert data["zero_alpha_candidate"] is True
+
+def test_model_total_loss_applies_configured_control_loss_weight():
+    captioning = RecordingCaptioningModel()
+    cfg = ACPRFlowModelConfig(
+        formal_backbone=False,
+        use_prefix_future=False,
+        loss_weights={
+            "action_text": 1.0,
+            "explanation_text": 1.0,
+            "control": 0.0,
+            "predicate_pu": 0.0,
+            "flow_pu": 0.0,
+            "reason_semantic": 0.0,
+            "future_control": 0.0,
+            "memory_diversity": 0.0,
+        },
+    )
+    model = ACPRFlowModel(cfg, captioning_model=captioning)
+    batch = _tiny_batch(batch_size=1)
+    batch.car_info = torch.full_like(batch.car_info, 100.0)
+    target = torch.nn.functional.normalize(torch.ones(1, 768), dim=-1)
+
+    out = model(batch=batch, reason_semantic_target=target)
+
+    assert out.loss_components["control"].detach().item() > 1000.0
+    assert out.loss_components["control_weighted"].detach().item() == 0.0
+    assert out.total_loss.detach().item() < out.loss_components["control"].detach().item() * 0.01

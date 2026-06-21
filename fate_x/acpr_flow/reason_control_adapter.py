@@ -31,4 +31,4 @@ class ReasonControlAdapter(nn.Module):
         delta = torch.tanh(self.delta(context)) * self.max_residual_std_fraction * scale
         gate = torch.tanh(self.gate_raw).to(base_prediction.dtype)
         final = base_prediction + delta * gate.view(1, 1, -1)
-        return {"control_final_prediction": final, "control_delta": delta * gate.view(1, 1, -1), "control_reason_attention": attn}
+        return {"control_base_prediction": base_prediction, "control_final_prediction": final, "control_delta": delta * gate.view(1, 1, -1), "control_reason_attention": attn}

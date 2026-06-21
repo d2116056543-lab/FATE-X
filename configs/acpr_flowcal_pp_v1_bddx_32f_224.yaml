@@ -12,6 +12,8 @@ repository:
 paths:
   train_yaml: datasets_part/BDDX/training_32frames.yaml
   test_yaml: datasets/BDDX/testing_32frames.yaml
+  # ADAPT signal/control labels come from processed_video_info and fully cover datasets_part.
+  signal_test_yaml: datasets_part/BDDX/testing_32frames.yaml
   adapt_checkpoint: checkpoints/basemodel/checkpoints/model.bin
   bert_dir: models/captioning/bert-base-uncased
   video_swin_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
@@ -33,6 +35,7 @@ data:
   signals: [course, speed]
   invalid_control_value: -1.0
   num_workers: 4
+  allow_windows_workers: false
   pin_memory: true
   persistent_workers: true
   train_calib_fraction: 0.10
@@ -265,8 +268,13 @@ evaluation:
     - cider_action
     - negative_speed_rmse
     - negative_course_rmse
-  beam_size_formal: 3
+  # ADAPT sep-cap scripts leave num_beams at the default 1; beam>1 terminates before the explanation half in this fork.
+  beam_size_formal: 1
   beam_size_smoke: 1
+  smoke_before_full: true
+  smoke_max_eval_samples: 32
+  control_smoke_max_eval_samples: 64
+  save_pre_eval_checkpoint: true
   save_latest: true
   save_best_test: true
   save_best_action: true

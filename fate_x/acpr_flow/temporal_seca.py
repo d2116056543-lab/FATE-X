@@ -12,6 +12,17 @@ def scaled_gradient(memory: Tensor, scale: float) -> Tensor:
     return memory.detach() + float(scale) * (memory - memory.detach())
 
 
+def match_beam_batch(tensor: Tensor | None, target_batch: int, name: str) -> Tensor | None:
+    if tensor is None or tensor.shape[0] == target_batch:
+        return tensor
+    source_batch = int(tensor.shape[0])
+    if source_batch > 0 and target_batch % source_batch == 0:
+        return tensor.repeat_interleave(target_batch // source_batch, dim=0)
+    raise RuntimeError(
+        f"{name} batch size {source_batch} cannot be aligned to hidden batch size {target_batch}"
+    )
+
+
 class TemporalSECA(nn.Module):
     def __init__(self, hidden_dim: int = 768, max_action_scale: float = 0.15, max_explanation_scale: float = 0.30,
                  action_grad_scale: float = 0.25, explanation_grad_scale: float = 1.0) -> None:
@@ -30,14 +41,28 @@ class TemporalSECA(nn.Module):
 
     def forward(self, hidden: Tensor, reason_memory: Tensor, token_type_ids: Tensor | None = None,
                 text_len: int | None = None) -> tuple[Tensor, dict[str, Tensor]]:
+        batch_size = int(hidden.shape[0])
+        reason_memory = match_beam_batch(reason_memory, batch_size, "reason_memory")
+        token_type_ids = match_beam_batch(token_type_ids, batch_size, "token_type_ids")
         if text_len is None:
             text_len = hidden.shape[1]
+        text_len = min(int(text_len), int(hidden.shape[1]))
         text = hidden[:, :text_len]
         image = hidden[:, text_len:]
         if token_type_ids is None:
             action_mask = torch.ones(text.shape[:2], dtype=torch.bool, device=hidden.device)
         else:
-            action_mask = token_type_ids[:, :text_len].eq(0)
+            action_mask = token_type_ids[:, :text_len].eq(0).to(device=hidden.device)
+            if action_mask.shape[1] < text.shape[1]:
+                pad = torch.ones(
+                    action_mask.shape[0],
+                    text.shape[1] - action_mask.shape[1],
+                    dtype=torch.bool,
+                    device=hidden.device,
+                )
+                action_mask = torch.cat([action_mask, pad], dim=1)
+            elif action_mask.shape[1] > text.shape[1]:
+                action_mask = action_mask[:, : text.shape[1]]
         memory_action = scaled_gradient(reason_memory, self.action_grad_scale)
         memory_exp = scaled_gradient(reason_memory, self.explanation_grad_scale)
         q = self.q(text)

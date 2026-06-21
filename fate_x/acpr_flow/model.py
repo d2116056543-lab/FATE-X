@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import math
 
 import torch
 from torch import Tensor, nn
@@ -39,11 +40,22 @@ class ACPRFlowModelConfig:
     vocab_size: int = 30522
     bert_img_feature_dim: int = 512
     invalid_control_value: float = -1.0
+    control_signal_names: tuple[str, ...] = ("course", "speed")
     hardpair_queue_size: int = 4096
     hardpair_margin: float = 0.20
     hardpair_max_pairs_per_batch: int = 64
     hardpair_pair_weight: float = 0.03
     hardpair_pair_budget_ratio: float = 0.08
+    loss_weights: dict[str, float] = field(default_factory=lambda: {
+        "action_text": 1.0,
+        "explanation_text": 1.0,
+        "control": 0.05,
+        "predicate_pu": 0.05,
+        "flow_pu": 0.03,
+        "reason_semantic": 0.05,
+        "future_control": 0.02,
+        "memory_diversity": 0.001,
+    })
 
 
 class TinyDirectImageVideoBackbone(nn.Module):
@@ -210,6 +222,25 @@ class ACPRFlowModel(nn.Module):
             raise ValueError("ACPRFlowModel.forward requires frames or ACPRFlowBatch")
         return frames, control_targets, masked_ids, raw_actions or ["" for _ in range(frames.shape[0])], raw_justifications or ["" for _ in range(frames.shape[0])]
 
+    def _control_hidden_sequence(self, reason_state: Tensor, steps: int | None = None) -> Tensor:
+        steps = int(steps or self.config.num_frames)
+        base = self.control_hidden(reason_state).unsqueeze(1).expand(reason_state.shape[0], steps, -1)
+        time = torch.linspace(-1.0, 1.0, steps, device=base.device, dtype=base.dtype).view(1, steps, 1)
+        freq = torch.linspace(0.5, 1.5, base.shape[-1], device=base.device, dtype=base.dtype).view(1, 1, -1)
+        # Fixed temporal code keeps the continuous-control path from producing
+        # identical per-frame predictions before reason-memory adaptation.
+        state_modulation = 1.0 + 0.25 * torch.tanh(base)
+        temporal_code = time * freq * state_modulation
+        return base + 0.05 * temporal_code
+
+    def predict_control_from_bundle(self, bundle: ACPRFlowBundle, steps: int | None = None) -> dict[str, Tensor]:
+        control_hidden = self._control_hidden_sequence(bundle.global_reason_state, steps=steps)
+        control_base = self.control_base(control_hidden)
+        ctrl = self.reason_control_adapter(control_base, control_hidden, bundle.reason_memory)
+        bundle.control_reason_attention = ctrl["control_reason_attention"]
+        bundle.control_delta = ctrl["control_delta"]
+        return ctrl
+
     def _masked_token_loss(self, logits: Tensor, target_ids: Tensor | None) -> Tensor:
         if target_ids is None:
             return logits.mean() * 0.0
@@ -237,7 +268,12 @@ class ACPRFlowModel(nn.Module):
             future_control_targets = control_targets[:, -pred.shape[1]:, :]
         if future_control_targets is None:
             return pred.abs().mean()
-        return masked_l2_loss(pred, future_control_targets.to(device=pred.device, dtype=pred.dtype), self.config.invalid_control_value)
+        return masked_l2_loss(
+            pred,
+            future_control_targets.to(device=pred.device, dtype=pred.dtype),
+            self.config.invalid_control_value,
+            signal_names=self.config.control_signal_names,
+        )
 
     def _fallback_text_losses(self, bundle: ACPRFlowBundle, masked_ids: Tensor | None) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         b = bundle.global_reason_state.shape[0]
@@ -297,6 +333,50 @@ class ACPRFlowModel(nn.Module):
 
         return _loss_for(selected_types.eq(0)), _loss_for(selected_types.ne(0))
 
+    def _caption_action_target_embedding(
+        self,
+        batch: ACPRFlowBatch | None,
+        fallback: Tensor,
+    ) -> Tensor:
+        """Build an action-text target embedding independent from the reason target.
+
+        The temporal hard-pair queue needs two different notions of similarity:
+        samples with similar action text but dissimilar explanation/reason text.
+        Passing the same reason vector for both makes the hard-pair predicate
+        mathematically impossible, because sim_action and sim_reason are equal.
+        """
+        if (
+            batch is None
+            or self.captioning_model is None
+            or batch.masked_ids is None
+            or batch.masked_pos is None
+            or batch.token_type_ids is None
+        ):
+            return fallback.detach()
+        word_embeddings = getattr(getattr(getattr(self.captioning_model, "bert", None), "embeddings", None), "word_embeddings", None)
+        if word_embeddings is None:
+            return fallback.detach()
+        masked_ids = batch.masked_ids.to(device=fallback.device)
+        masked_pos = batch.masked_pos.to(device=fallback.device).bool()
+        token_type_ids = batch.token_type_ids.to(device=fallback.device)
+        out: list[Tensor] = []
+        for i in range(fallback.shape[0]):
+            pos_types = token_type_ids[i, : masked_pos.shape[-1]][masked_pos[i]]
+            if masked_ids.shape == masked_pos.shape:
+                ids = masked_ids[i][masked_pos[i]]
+            else:
+                ids = masked_ids[i].reshape(-1)
+            valid_len = min(int(ids.numel()), int(pos_types.numel()))
+            ids = ids[:valid_len].long()
+            pos_types = pos_types[:valid_len]
+            valid = ids.ge(0) & pos_types.eq(0)
+            if bool(valid.any()):
+                emb = word_embeddings(ids[valid].to(device=word_embeddings.weight.device))
+                out.append(emb.to(device=fallback.device, dtype=fallback.dtype).mean(dim=0))
+            else:
+                out.append(fallback[i].detach())
+        return torch.stack(out, dim=0)
+
     def _captioning_text_losses(
         self,
         batch: ACPRFlowBatch,
@@ -332,13 +412,75 @@ class ACPRFlowModel(nn.Module):
         )
         return action_loss, explanation_loss, baseline_logits, enhanced_logits
 
+    def decode_adapt(
+        self,
+        *,
+        input_ids: Tensor,
+        attention_mask: Tensor | None,
+        token_type_ids: Tensor | None,
+        img_feats: Tensor,
+        masked_pos: Tensor,
+        car_info: Tensor | None = None,
+        **generation_kwargs,
+    ):
+        """ADAPT-compatible generation path used by src.tasks.run_adapt.test.
+
+        ADAPT's dataloader passes direct frames in the ``img_feats`` slot for the
+        ACPR formal path. This method preserves ADAPT's beam search and caption
+        evaluation while replacing the image features with the current ACPR
+        source/flow-enhanced visual features.
+        """
+        if self.captioning_model is None:
+            raise RuntimeError("ACPR ADAPT generation requires captioning_model")
+        if img_feats.ndim == 5:
+            frames = img_feats
+            grids = self.backbone(frames)
+            bundle = self.build_bundle(frames, precomputed_grids=grids)
+            bert_img_feats = self._bert_image_features(grids, bundle)
+        elif img_feats.ndim == 3:
+            bundle = None
+            bert_img_feats = img_feats
+        else:
+            raise ValueError(f"ADAPT decode expects direct frames [B,T,3,H,W] or image features [B,N,D], got {tuple(img_feats.shape)}")
+        caption_attention = self._attention_for_captioning(input_ids, bert_img_feats, attention_mask)
+        text_len = int(masked_pos.shape[-1]) if masked_pos is not None else int(input_ids.shape[-1])
+        return self.captioning_model(
+            input_ids=input_ids,
+            attention_mask=caption_attention,
+            token_type_ids=token_type_ids,
+            img_feats=bert_img_feats,
+            masked_pos=masked_pos,
+            car_info=car_info,
+            is_decode=True,
+            acpr_flow_bundle=bundle,
+            acpr_temporal_seca=self.temporal_seca if bundle is not None else None,
+            acpr_text_len=text_len,
+            **generation_kwargs,
+        )
+
     def forward(self, frames: Tensor | None = None, control_targets: Tensor | None = None,
                 intervention: InterventionSpec | None = None, batch: ACPRFlowBatch | None = None,
                 masked_ids: Tensor | None = None, raw_actions: list[str] | None = None,
                 raw_justifications: list[str] | None = None,
                 reason_semantic_target: Tensor | None = None,
                 future_control_targets: Tensor | None = None,
-                precomputed_grids: dict[str, Tensor] | None = None) -> ACPRFlowTrainOutput:
+                precomputed_grids: dict[str, Tensor] | None = None,
+                input_ids: Tensor | None = None, attention_mask: Tensor | None = None,
+                token_type_ids: Tensor | None = None, img_feats: Tensor | None = None,
+                masked_pos: Tensor | None = None, car_info: Tensor | None = None,
+                is_decode: bool = False, **generation_kwargs) -> ACPRFlowTrainOutput:
+        if is_decode:
+            if input_ids is None or img_feats is None or masked_pos is None:
+                raise ValueError("ACPR ADAPT decode requires input_ids, img_feats, and masked_pos")
+            return self.decode_adapt(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                img_feats=img_feats,
+                masked_pos=masked_pos,
+                car_info=car_info,
+                **generation_kwargs,
+            )
         frames, control_targets, masked_ids, raw_actions, raw_justifications = self._resolve_inputs(
             frames, batch, control_targets, masked_ids, raw_actions, raw_justifications
         )
@@ -361,17 +503,20 @@ class ACPRFlowModel(nn.Module):
             grids,
             bundle,
         )
-        control_hidden = self.control_hidden(bundle.global_reason_state).unsqueeze(1).expand(b, 32, -1)
-        control_base = self.control_base(control_hidden)
-        ctrl = self.reason_control_adapter(control_base, control_hidden, bundle.reason_memory)
-        bundle.control_reason_attention = ctrl["control_reason_attention"]
-        bundle.control_delta = ctrl["control_delta"]
+        control_steps = control_targets.shape[1] if control_targets is not None and control_targets.ndim >= 3 else self.config.num_frames
+        ctrl = self.predict_control_from_bundle(bundle, steps=control_steps)
+        control_base = ctrl["control_base_prediction"]
         control_final = ctrl["control_final_prediction"]
         if control_targets is None:
             control_loss = control_final.sum() * 0.0
         else:
             control_targets = control_targets.to(device=control_final.device, dtype=control_final.dtype)
-            control_loss = masked_l2_loss(control_final, control_targets, self.config.invalid_control_value)
+            control_loss = masked_l2_loss(
+                control_final,
+                control_targets,
+                self.config.invalid_control_value,
+                signal_names=self.config.control_signal_names,
+            )
         text_targets = self.text_targets.build(raw_actions, raw_justifications, device=frames.device)
         predicate_pu = partial_label_bce(
             bundle.predicate_logits_temporal.mean(dim=1),
@@ -391,26 +536,35 @@ class ACPRFlowModel(nn.Module):
             if reason_semantic_target is not None
             else F.normalize(bundle.global_reason_state.detach(), dim=-1)
         )
+        action_for_pair = self._caption_action_target_embedding(batch, reason_for_pair)
         hardpair = self.hardpair(
             bundle.global_reason_state,
             reason_for_pair,
-            reason_for_pair,
+            action_for_pair,
             base_loss=action_loss + explanation_loss + control_loss,
         )
-        if reason_semantic_target is not None:
-            self.hardpair.enqueue(reason_for_pair.detach(), reason_for_pair.detach())
+        self.hardpair.enqueue(reason_for_pair.detach(), action_for_pair.detach())
         hardpair_weighted = hardpair["hardpair_budgeted_loss"] * self.hardpair_pair_weight
         future_control = self._future_control_loss(bundle.global_reason_state, control_targets, future_control_targets)
         memory_diversity = memory_diversity_loss(bundle.reason_memory)
+        weights = self.config.loss_weights
+        action_weighted = action_loss * float(weights.get("action_text", 1.0))
+        explanation_weighted = explanation_loss * float(weights.get("explanation_text", 1.0))
+        control_weighted = control_loss * float(weights.get("control", 0.05))
+        predicate_weighted = predicate_pu * float(weights.get("predicate_pu", 0.05))
+        flow_weighted = flow_pu * float(weights.get("flow_pu", 0.03))
+        reason_weighted = reason_semantic * float(weights.get("reason_semantic", 0.05))
+        future_weighted = future_control * float(weights.get("future_control", 0.02))
+        memory_weighted = memory_diversity * float(weights.get("memory_diversity", 0.001))
         auxiliary_loss = (
-            0.001 * memory_diversity
-            + 0.05 * predicate_pu
-            + 0.03 * flow_pu
-            + 0.05 * reason_semantic
-            + 0.02 * future_control
+            memory_weighted
+            + predicate_weighted
+            + flow_weighted
+            + reason_weighted
+            + future_weighted
             + hardpair_weighted
         )
-        total = action_loss + explanation_loss + control_loss + auxiliary_loss
+        total = action_weighted + explanation_weighted + control_weighted + auxiliary_loss
         return ACPRFlowTrainOutput(
             action_text_loss=action_loss,
             explanation_text_loss=explanation_loss,
@@ -431,6 +585,14 @@ class ACPRFlowModel(nn.Module):
                 "reason_semantic": reason_semantic,
                 "future_control": future_control,
                 "memory_diversity": memory_diversity,
+                "action_text_weighted": action_weighted,
+                "explanation_text_weighted": explanation_weighted,
+                "control_weighted": control_weighted,
+                "predicate_pu_weighted": predicate_weighted,
+                "flow_pu_weighted": flow_weighted,
+                "reason_semantic_weighted": reason_weighted,
+                "future_control_weighted": future_weighted,
+                "memory_diversity_weighted": memory_weighted,
                 "hardpair_raw_loss": hardpair["hardpair_raw_loss"],
                 "hardpair_budgeted_loss": hardpair["hardpair_budgeted_loss"],
                 "hardpair_weighted_loss": hardpair_weighted,

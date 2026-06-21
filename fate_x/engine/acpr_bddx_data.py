@@ -30,8 +30,11 @@ def build_bddx_acpr_args(cfg: dict[str, Any], split: str, batch_size: int, max_s
     limited_eval = int(max_samples) if split != "train" and int(max_samples) > 0 else -1
     num_workers = int(data.get("num_workers", 4))
     persistent_workers = bool(data.get("persistent_workers", True))
-    if os.name == "nt":
+    allow_windows_workers = bool(data.get("allow_windows_workers", False))
+    if os.name == "nt" and not allow_windows_workers:
         num_workers = 0
+        persistent_workers = False
+    if num_workers <= 0:
         persistent_workers = False
     return SimpleNamespace(
         data_dir=".",

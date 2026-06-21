@@ -1,8 +1,35 @@
 from __future__ import annotations
 
+from typing import Sequence
+
 import torch
 from torch import Tensor
 import torch.nn.functional as F
+
+
+def is_circular_control_signal(name: str) -> bool:
+    return str(name).lower() in {"course", "heading", "yaw"}
+
+
+def signed_circular_delta_deg(delta: Tensor) -> Tensor:
+    """Return the shortest signed degree delta in [-180, 180)."""
+    return torch.remainder(delta + 180.0, 360.0) - 180.0
+
+
+def control_signal_error(pred: Tensor, target: Tensor, signal_names: Sequence[str] | None = None) -> Tensor:
+    """Compute control error, treating angular course-like signals as circular degrees."""
+    error = pred - target
+    if signal_names is None:
+        return error
+    if error.shape[-1] < len(signal_names):
+        raise ValueError(f"signal_names length {len(signal_names)} exceeds control dim {error.shape[-1]}")
+    if not any(is_circular_control_signal(name) for name in signal_names):
+        return error
+    error = error.clone()
+    for idx, name in enumerate(signal_names):
+        if is_circular_control_signal(name):
+            error[..., idx] = signed_circular_delta_deg(error[..., idx])
+    return error
 
 
 def partial_label_bce(logits: Tensor, positive: Tensor, contradiction: Tensor, reliability: Tensor) -> Tensor:
@@ -14,9 +41,15 @@ def partial_label_bce(logits: Tensor, positive: Tensor, contradiction: Tensor, r
     return (mixed * weight).sum() / weight.sum().clamp_min(1.0)
 
 
-def masked_l2_loss(pred: Tensor, target: Tensor, invalid_value: float = -1.0) -> Tensor:
+def masked_l2_loss(
+    pred: Tensor,
+    target: Tensor,
+    invalid_value: float = -1.0,
+    signal_names: Sequence[str] | None = None,
+) -> Tensor:
     mask = target.ne(invalid_value)
-    return ((pred - target).pow(2) * mask).sum() / mask.sum().clamp_min(1)
+    error = control_signal_error(pred, target, signal_names=signal_names)
+    return (error.pow(2) * mask).sum() / mask.sum().clamp_min(1)
 
 
 def memory_diversity_loss(memory: Tensor) -> Tensor:
