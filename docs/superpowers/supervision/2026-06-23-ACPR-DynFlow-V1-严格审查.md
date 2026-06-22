@@ -53,3 +53,12 @@
 - `python -m pytest tests/acpr_dynflow -q`：`48 passed, 102 warnings in 295.85s`
 - real-loader preflight：`dirty_worktree`, `oia_checkpoint_unresolved`；其中 `bert_not_loaded` 已修复。
 - 待提交后预期 dirty blocker 消失。
+
+## 2026-06-23 补充监督记录：OIA/Gradient Gate 纠偏
+
+- 监督结论更新：原实现存在两个不能放过的问题：OIA checkpoint 未真实加载、gradient-chain gate 既过严又漏接 failed report。
+- 执行侧纠正：真实加载 `E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth` 中的 `predicate_head.predicate_queries`，动态审计证明 `oia_loaded=true`、source dim 384、SHA `84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2`。
+- 执行侧纠正：发现并修复 `lane_flow.encoder`、`reasoner.lateral`、`backbone.text_proj` 的梯度断链；冻结未用 `swin.head` 和 `bert.pooler`。
+- 验证证据：`.background_runs/acpr_dynflow_v1_gradient_fixed_preflight/review_report.json` 中 `failed_reports=[]`，仅 `dirty_worktree`；`gate_gradient_chain.passed=true`。
+- 代码验证：`compileall=0`，`pytest tests/acpr_dynflow -q = 48 passed`，`git diff --check=0`。
+- 当前监督状态：尚未最终批准训练；需要提交、push、clean HEAD full preflight、写 review pass 后才允许 formal training。

@@ -574,3 +574,16 @@ Generated: 2026-06-23 00:12:56
 11. Ran CUDA synthetic smoke and real-loader preflight; `bert_not_loaded` disappeared.
 12. Ran full tests after the real-loader changes: `48 passed, 102 warnings in 295.85s`.
 13. Next step is commit/push this hardening, then rerun preflight from a clean worktree. Expected blocker after commit: only `oia_checkpoint_unresolved`.
+
+## 2026-06-23 04:45 进度记录：ACPR-DynFlow V1 strict gate 修复
+
+1. 定位 OIA blocker：`ckp/classifier.pth.tar` 只有 linear classifier，不含 predicate queries；转向 `fate_oia_acpr_calalign_v1_2_worktree` 搜索真实 CalAlign checkpoint。
+2. 找到并采用：`E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth`，其中 top key 有 `model/optimizer/epoch/metrics/base_lrs`，`model` 内含 `predicate_head.predicate_queries`。
+3. 改写 `predicate_transfer.py`：加载 checkpoint、抽取 32 条 predicate query、支持 384->256 mapper、保留 name prior 和 trainable residual，并在 audit 中写 source/shape/SHA。
+4. 改写 preflight/audit：动态 forward 后写 `oia_loaded`；formal audit 对 `oia_loaded=false` 阻断；required report 中任何 `passed:false` 也阻断。
+5. 首次动态 preflight 结果：OIA 已通过，但 `gate_gradient_chain.passed=false`，且旧 review 没阻断 failed report，暴露 gate wiring 问题。
+6. 排查 gradient missing params：`lane_flow.encoder`、`reasoner.lateral`、`backbone.text_proj`、`swin.head`、`bert.pooler`。
+7. 修复真实 dead path：lane-flow token 接入 traffic-state factor，lateral bias 接入 course decision ledger，visual text token 接入 text decoder；未用 head/pooler 冻结。
+8. 二次动态 preflight：`failed_reports=[]`，`gate_gradient_chain.passed=true`，唯一 blocker 为 `dirty_worktree`。
+9. 验证命令：`python -m compileall -q fate_x tests/acpr_dynflow` exit 0；`python -m pytest tests/acpr_dynflow -q` 48 passed；`git diff --check` exit 0。
+10. 当前状态：等待 commit/push，然后 clean HEAD 重新跑 full preflight + review pass。未写 `REVIEW_PASS` 前，formal training 仍不得启动。

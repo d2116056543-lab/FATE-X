@@ -17,6 +17,11 @@ class DecisionLedgerHead(nn.Module):
     def forward(self, global_norm: Tensor, flow: TrafficFlowState, codec: BDDSignalCodec) -> DecisionLedger:
         course = self.course_reader(flow.lag_aligned_tokens)
         speed = self.speed_reader(flow.lag_aligned_tokens)
+        lateral = flow.lateral_bias.squeeze(-1)
+        if lateral.shape[1] != course.shape[1]:
+            lateral = torch.nn.functional.interpolate(lateral.unsqueeze(1), size=course.shape[1], mode="linear", align_corners=False).squeeze(1)
+        # Signed lateral traffic bias must directly affect course contributions.
+        course = course + lateral.unsqueeze(-1).unsqueeze(2)
         contrib = torch.cat([course, speed], dim=-1) / max(flow.lag_aligned_tokens.shape[2], 1)
         if global_norm.shape[1] != contrib.shape[1]:
             global_norm = torch.nn.functional.interpolate(global_norm.permute(0, 2, 1), size=contrib.shape[1], mode="linear", align_corners=False).permute(0, 2, 1)

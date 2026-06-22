@@ -106,8 +106,27 @@ def build_static_reports(repo: Path, config_path: Path, out: Path) -> dict:
     }
 
 
+
+
+def _failed_required_reports(out: Path) -> list[str]:
+    failed: list[str] = []
+    for name in REQUIRED_REPORTS:
+        if name in {"review_report.json", "REVIEW_PASS_ACPR_DYNFLOW_V1.txt"}:
+            continue
+        path = out / name
+        if not path.exists() or path.suffix.lower() != ".json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict) and payload.get("passed") is False:
+            failed.append(name)
+    return failed
+
 def maybe_write_pass(repo: Path, out: Path, state: dict, write_review_pass: bool) -> dict:
     missing = [name for name in REQUIRED_REPORTS if name != "review_report.json" and not (out / name).exists()]
+    failed = _failed_required_reports(out)
     blockers = []
     if state["branch"] != "acpr_dynflow_v1":
         blockers.append("wrong_branch")
@@ -125,9 +144,13 @@ def maybe_write_pass(repo: Path, out: Path, state: dict, write_review_pass: bool
         blockers.append("video_swin_not_loaded")
     if state.get("bert_loaded") is False:
         blockers.append("bert_not_loaded")
+    if state.get("oia_loaded") is False:
+        blockers.append("oia_query_not_loaded")
     if missing:
         blockers.append("missing_required_reports")
-    report = {"passed": not blockers, "blockers": blockers, "missing_reports": missing, "predicate_names": list(EXACT_32_PREDICATES)}
+    if failed:
+        blockers.append("failed_required_reports")
+    report = {"passed": not blockers, "blockers": blockers, "missing_reports": missing, "failed_reports": failed, "predicate_names": list(EXACT_32_PREDICATES)}
     (out / "review_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     if blockers:
         pass_path = out / "REVIEW_PASS_ACPR_DYNFLOW_V1.txt"

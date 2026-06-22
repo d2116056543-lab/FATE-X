@@ -21,20 +21,63 @@ def checkpoint_sha256(path: str | Path) -> str | None:
     return h.hexdigest()
 
 
+def _find_oia_predicate_state(ckpt: Any) -> tuple[Tensor | None, dict[str, Tensor], str]:
+    states: list[tuple[str, dict[str, Tensor]]] = []
+    if isinstance(ckpt, dict):
+        for key in ("model", "state_dict", "module", "net"):
+            if isinstance(ckpt.get(key), dict):
+                states.append((key, ckpt[key]))
+        states.append(("<top>", ckpt))
+    for source, sd in states:
+        q = None
+        extras: dict[str, Tensor] = {}
+        for key, value in sd.items():
+            clean = key.replace("module.", "")
+            if clean == "predicate_head.predicate_queries" and torch.is_tensor(value):
+                q = value.float()
+            elif clean.startswith("predicate_head.") and torch.is_tensor(value):
+                extras[clean] = value.detach().cpu()
+        if q is not None:
+            return q, extras, source
+    return None, {}, ""
+
+
 class PredicateQueryInitializer(nn.Module):
     def __init__(self, dim: int = 256, checkpoint_path: str | None = None):
         super().__init__()
         self.names = EXACT_32_PREDICATES
-        gen = torch.Generator().manual_seed(20260622)
-        base = torch.randn(len(self.names), dim, generator=gen) * 0.02
-        name = torch.stack([self._name_embedding(n, dim) for n in self.names])
-        self.register_buffer("oia_prior", base)
-        self.register_buffer("name_prior", name)
-        self.oia_mapper = nn.Linear(dim, dim, bias=False)
-        self.name_mapper = nn.Linear(dim, dim, bias=False)
-        self.residual = nn.Parameter(torch.zeros(len(self.names), dim))
         self.checkpoint_path = checkpoint_path or ""
         self.checkpoint_sha256 = checkpoint_sha256(checkpoint_path) if checkpoint_path else None
+        self.oia_loaded = False
+        self.oia_load_error = ""
+        self.oia_source = ""
+        self.oia_source_dim = dim
+        self.oia_extra_keys: list[str] = []
+
+        gen = torch.Generator().manual_seed(20260622)
+        oia_prior = torch.randn(len(self.names), dim, generator=gen) * 0.02
+        if checkpoint_path and Path(checkpoint_path).exists():
+            try:
+                ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+                loaded, extras, source = _find_oia_predicate_state(ckpt)
+                if loaded is None:
+                    raise KeyError("predicate_head.predicate_queries not found in checkpoint")
+                if loaded.shape[0] < len(self.names):
+                    raise ValueError(f"checkpoint has {loaded.shape[0]} queries, expected at least {len(self.names)}")
+                oia_prior = loaded[: len(self.names)].contiguous()
+                self.oia_loaded = True
+                self.oia_source = source
+                self.oia_source_dim = int(oia_prior.shape[1])
+                self.oia_extra_keys = sorted(extras.keys())
+            except Exception as exc:
+                self.oia_load_error = f"{type(exc).__name__}: {exc}"
+
+        name = torch.stack([self._name_embedding(n, dim) for n in self.names])
+        self.register_buffer("oia_prior", oia_prior.float())
+        self.register_buffer("name_prior", name)
+        self.oia_mapper = nn.Linear(int(oia_prior.shape[1]), dim, bias=False)
+        self.name_mapper = nn.Linear(dim, dim, bias=False)
+        self.residual = nn.Parameter(torch.zeros(len(self.names), dim))
 
     @staticmethod
     def _name_embedding(name: str, dim: int) -> Tensor:
@@ -50,9 +93,14 @@ class PredicateQueryInitializer(nn.Module):
             "names": list(self.names),
             "checkpoint_path": self.checkpoint_path,
             "checkpoint_sha256": self.checkpoint_sha256,
+            "oia_loaded": self.oia_loaded,
+            "oia_load_error": self.oia_load_error,
+            "oia_source": self.oia_source,
+            "oia_source_dim": self.oia_source_dim,
+            "oia_extra_keys": self.oia_extra_keys,
+            "oia_prior_shape": list(self.oia_prior.shape),
             "oia_norm": float(q_oia.detach().norm().cpu()),
             "name_norm": float(q_name.detach().norm().cpu()),
             "residual_norm": float(self.residual.detach().norm().cpu()),
         }
         return q, report
-

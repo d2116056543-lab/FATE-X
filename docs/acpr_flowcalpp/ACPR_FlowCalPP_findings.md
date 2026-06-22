@@ -404,3 +404,33 @@ Do not continue this training run. Before another full run:
 
 ### Remaining blocker
 - `oia_checkpoint_unresolved` remains. This is now the only substantive formal training blocker after commit, assuming the worktree is clean.
+
+## 2026-06-23 发现与根因：OIA checkpoint 和 gradient gate 不是表面问题
+
+### OIA predicate transfer 根因
+- 原状态：配置中 `oia_acpr_checkpoint` 是 unresolved placeholder；早期 preflight 只证明路径或字段存在，不能证明 OIA predicate queries 被真实加载。
+- 搜索结果：在 `fate_oia_acpr_calalign_v1_2_worktree` 找到有效 checkpoint，包含 `model/predicate_head.predicate_queries` 和相关 query/key/value/logit/temperature 权重。
+- 采用 checkpoint：`E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth`。
+- 动态 preflight 证据：`oia_predicate_transfer_audit.json` 记录 `oia_loaded=true`、`oia_source=model`、`oia_source_dim=384`、`oia_prior_shape=[32,384]`、`checkpoint_sha256=84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2`。
+
+### Gradient-chain gate 根因
+- 原 gate 错误：`run_acpr_dynflow_preflight.py` 用 `all(v > 0 for every trainable parameter)` 判定，计划要求是每个 intended trainable component 有梯度，不是每个参数都非零。
+- 更重要的是，排查发现有真实的 dead trainable path：
+  - `lane_flow.encoder.*` 无梯度，因为 `MesoscopicLaneFlow.forward()` 产生的 `tokens` 没有被 `TrafficStateReasoner` 使用。
+  - `reasoner.lateral.*` 无梯度，因为 `lateral_bias` 只被写进 dataclass，没有进入 decision/course prediction 或 loss。
+  - `backbone.text_proj.*` 无梯度，因为 `bb.text_visual_tokens` 没有进入 text decoder。
+  - `backbone.swin.head.*` 和 `text_decoder.bert.pooler.*` 是未使用头，却保持 trainable。
+- 代码修复：
+  - `traffic_state_reasoner.py` 将 `lane_flow["tokens"].mean(2)` 加入 `factor_tokens`。
+  - `decision_ledger.py` 将 `flow.lateral_bias` 时间对齐后加入 course contribution。
+  - `model.py` 将 `visual_tokens=bb.text_visual_tokens` 传给 `DynFlowTextDecoder`。
+  - `text_decoder.py` 将 visual tokens 插入 caption hidden state；冻结 BERT pooler。
+  - `video_backbone.py` 冻结 Swin classifier head。
+  - `run_acpr_dynflow_preflight.py` 增加 component-level gradient report，包含 `component_norms`、`missing_components`、`missing_trainable_grad_params`、`frozen_params_with_grad`。
+  - `audit_acpr_dynflow.py` 增加 `failed_required_reports` blocker。
+
+### 当前验证结果
+- 动态 preflight：`.background_runs/acpr_dynflow_v1_gradient_fixed_preflight/review_report.json` 只剩 `dirty_worktree`，`missing_reports=[]`，`failed_reports=[]`。
+- Gradient chain：`gate_gradient_chain.passed=true`，`missing_components=[]`，`frozen_params_with_grad=[]`，`missing_trainable_grad_params=0`。
+- 关键组件梯度均非零：`oia_query_mapper`、`predicate_query_residual`、`predicate_gru`、`predicate_visual_projection`、`mesoscopic_lane_flow`、`traffic_state_reasoner`、`response_lag`、`global_decision_stream`、`decision_ledger`、`visual_text_projection`、`text_decoder_top_layers`、`video_swin_trainable`。
+- 测试：`compileall=0`；`pytest tests/acpr_dynflow -q` 为 `48 passed, 102 warnings in 313.56s`；`git diff --check=0`。

@@ -22,6 +22,10 @@ class TrafficStateReasoner(nn.Module):
         score = torch.einsum("fd,btkd->btfk", self.factor_queries, x) / (x.shape[-1] ** 0.5)
         support = entmax15_like(score, dim=-1)
         factor_tokens = torch.einsum("btfk,btkd->btfd", support, x)
+        if "tokens" in lane_flow:
+            # Inject corridor-level mesoscopic flow so lane dynamics affect factors and downstream decisions.
+            lane_context = lane_flow["tokens"].mean(2).unsqueeze(2)
+            factor_tokens = factor_tokens + lane_context
         factor_tokens = self.factor_proj(factor_tokens)
         logits = self.factor_logit(factor_tokens).squeeze(-1)
         probs = torch.sigmoid(logits)

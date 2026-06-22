@@ -1,4 +1,4 @@
-﻿config_version: acpr_dynflow_v1
+config_version: acpr_dynflow_v1
 experiment_name: acpr_dynflow_v1_bddx_32f_224
 protocol_tag: test_selected_user_requested
 
@@ -19,7 +19,7 @@ paths:
   video_swin_kinetics_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
   bert_dir: models/captioning/bert-base-uncased
 
-  oia_acpr_checkpoint: UNRESOLVED_REQUIRED_FATE_OIA_ACPR_CALALIGN_V1_2_QUERY_CHECKPOINT
+  oia_acpr_checkpoint: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth
   oia_predicate_yaml: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/configs/acpr_scene_predicates.yaml
   oia_source_branch: acpr_calalign_v1_2
 

@@ -505,3 +505,18 @@ M .gitignore
 - `fate_x/acpr_dynflow/text_decoder.py` now loads local `models/captioning/bert-base-uncased` with `transformers.BertModel`, freezes embeddings and bottom 8 encoder layers, and trains the top 4 layers.
 - `fate_x/engine/run_acpr_dynflow_preflight.py` now writes `backbone_audit.json` and `text_decoder_audit.json` with explicit `kinetics_loaded`, `uses_torchvision_swin`, and `bert_loaded` fields.
 - `fate_x/engine/audit_acpr_dynflow.py` now blocks formal review if Video Swin or BERT assets are missing or fail to load.
+
+## 2026-06-23 ACPR-DynFlow V1 OIA/Gradient Gate 补全计划更新
+
+### 当前必须完成的剩余门槛
+- 已完成：将 `paths.oia_acpr_checkpoint` 从 unresolved placeholder 改为真实 CalAlign/OIA predicate checkpoint：`E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth`。
+- 已完成：`PredicateQueryInitializer` 不再只用随机 prior/name prior；现在真实读取 checkpoint 内 `model/predicate_head.predicate_queries`，记录 SHA256、source key、source dim、extra predicate-head keys。
+- 已完成：`run_acpr_dynflow_preflight.py` 写出 `state["oia_loaded"]`，`audit_acpr_dynflow.py` 在 `oia_loaded=false` 时阻断为 `oia_query_not_loaded`。
+- 已完成：`maybe_write_pass` 不再只看 missing reports；现在会读取 required audit JSON 中的 `passed:false` 并用 `failed_required_reports` 阻断，避免 gate false 但 review pass 误通过。
+- 已完成：`gate_gradient_chain` 从错误的“每个 trainable parameter 都必须非零”修正为计划要求的“每个 intended trainable component 有有限非零梯度，冻结组件无梯度”，并保留 parameter-level zero/missing 列表用于诊断。
+- 已完成：修复真实梯度断点，而不是只放宽 gate：`lane_flow.encoder` 进入 `TrafficStateReasoner`，`lateral_bias` 进入 `DecisionLedgerHead` 的 course contribution，`bb.text_visual_tokens` 进入 `DynFlowTextDecoder`，未使用的 `swin.head` 和 `bert.pooler` 冻结。
+
+### 下一步仍必须执行
+- 提交并 push 当前 9 个文件修改到 GitHub `acpr_dynflow_v1`。
+- 在 clean HEAD 上重新运行动态 preflight，要求 `review_report.blockers=[]` 且 `failed_reports=[]`。
+- 运行正式 audit 并写 `REVIEW_PASS_ACPR_DYNFLOW_V1.txt`，否则不得启动 formal training。

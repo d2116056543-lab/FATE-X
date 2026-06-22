@@ -115,6 +115,9 @@ class ACPRDynFlowVideoBackbone(nn.Module):
             for idx in [0, 1, 2, 3]:
                 for p in self.swin.features[idx].parameters():
                     p.requires_grad = False
+            # The Kinetics classifier head is not used by DynFlow; keep it out of gradient/optimizer gates.
+            for p in self.swin.head.parameters():
+                p.requires_grad = False
         else:
             self.stage0 = nn.Conv2d(3, 32, 3, padding=1)
             self.stage1 = nn.Conv2d(32, 64, 3, padding=1)

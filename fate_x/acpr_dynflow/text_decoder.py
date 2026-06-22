@@ -41,6 +41,8 @@ class DynFlowTextDecoder(nn.Module):
                         p.requires_grad = requires_grad
                 for p in self.bert.embeddings.parameters():
                     p.requires_grad = False
+                for p in self.bert.pooler.parameters():
+                    p.requires_grad = False
             except Exception as exc:  # pragma: no cover - exercised by preflight on asset failures
                 self.bert_load_error = f"{type(exc).__name__}: {exc}"
                 self.bert = None
@@ -69,7 +71,7 @@ class DynFlowTextDecoder(nn.Module):
             return self.bert(input_ids=ids.clamp_min(0).clamp_max(self.vocab_size - 1), attention_mask=attention).last_hidden_state
         return self.token_embed(ids.clamp_min(0).clamp_max(self.vocab_size - 1))
 
-    def forward(self, input_ids: Tensor | None, masked_ids: Tensor | None, flow: TrafficFlowState, ledger: DecisionLedger) -> DynFlowTextOutput:
+    def forward(self, input_ids: Tensor | None, masked_ids: Tensor | None, flow: TrafficFlowState, ledger: DecisionLedger, visual_tokens: Tensor | None = None) -> DynFlowTextOutput:
         b = flow.factor_tokens.shape[0]
         length = input_ids.shape[1] if input_ids is not None else 30
         ids = input_ids if input_ids is not None else torch.zeros(b, length, dtype=torch.long, device=flow.factor_tokens.device)
@@ -78,6 +80,10 @@ class DynFlowTextDecoder(nn.Module):
         if factor_context.shape[1] != length:
             factor_context = F.interpolate(factor_context.permute(0, 2, 1), size=length, mode="linear", align_corners=False).permute(0, 2, 1)
         ctx = base + self.factor_to_text(factor_context)
+        if visual_tokens is not None:
+            if visual_tokens.shape[1] != length:
+                visual_tokens = F.interpolate(visual_tokens.permute(0, 2, 1), size=length, mode="linear", align_corners=False).permute(0, 2, 1)
+            ctx = ctx + visual_tokens
         action_logits = self.action_lm(ctx)
         explanation_logits = self.explanation_lm(ctx)
         midpoint = max(1, length // 2)
