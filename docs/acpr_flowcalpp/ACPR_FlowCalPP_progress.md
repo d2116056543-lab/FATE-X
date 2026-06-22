@@ -587,3 +587,14 @@ Generated: 2026-06-23 00:12:56
 8. 二次动态 preflight：`failed_reports=[]`，`gate_gradient_chain.passed=true`，唯一 blocker 为 `dirty_worktree`。
 9. 验证命令：`python -m compileall -q fate_x tests/acpr_dynflow` exit 0；`python -m pytest tests/acpr_dynflow -q` 48 passed；`git diff --check` exit 0。
 10. 当前状态：等待 commit/push，然后 clean HEAD 重新跑 full preflight + review pass。未写 `REVIEW_PASS` 前，formal training 仍不得启动。
+
+## 2026-06-23 04:52 Final Preflight / Review Pass Evidence
+
+- Clean HEAD at time of pass: `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
+- Dynamic preflight output dir: `.background_runs/acpr_dynflow_v1_final_preflight_20260623_0450`.
+- `review_report.json`: `passed=true`, `blockers=[]`, `missing_reports=[]`, `failed_reports=[]`.
+- Formal audit with `--write_review_pass`: exit 0 and wrote `REVIEW_PASS_ACPR_DYNFLOW_V1.txt`.
+- OIA proof: `oia_loaded=true`, `oia_source=model`, `oia_source_dim=384`, `oia_prior_shape=32x384`, checkpoint SHA `84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2`.
+- Gradient proof: `gate_gradient_chain.passed=true`, `missing_components=[]`, `frozen_params_with_grad=[]`, `missing_trainable_grad_params=0`.
+- Git proof: local HEAD equals GitHub `acpr_dynflow_v1` HEAD at `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
+- Note: This md append changes HEAD, so final authorization must be rerun after this documentation commit.

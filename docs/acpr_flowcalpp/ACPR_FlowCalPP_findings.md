@@ -434,3 +434,14 @@ Do not continue this training run. Before another full run:
 - Gradient chain：`gate_gradient_chain.passed=true`，`missing_components=[]`，`frozen_params_with_grad=[]`，`missing_trainable_grad_params=0`。
 - 关键组件梯度均非零：`oia_query_mapper`、`predicate_query_residual`、`predicate_gru`、`predicate_visual_projection`、`mesoscopic_lane_flow`、`traffic_state_reasoner`、`response_lag`、`global_decision_stream`、`decision_ledger`、`visual_text_projection`、`text_decoder_top_layers`、`video_swin_trainable`。
 - 测试：`compileall=0`；`pytest tests/acpr_dynflow -q` 为 `48 passed, 102 warnings in 313.56s`；`git diff --check=0`。
+
+## 2026-06-23 04:52 Final Preflight / Review Pass Evidence
+
+- Clean HEAD at time of pass: `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
+- Dynamic preflight output dir: `.background_runs/acpr_dynflow_v1_final_preflight_20260623_0450`.
+- `review_report.json`: `passed=true`, `blockers=[]`, `missing_reports=[]`, `failed_reports=[]`.
+- Formal audit with `--write_review_pass`: exit 0 and wrote `REVIEW_PASS_ACPR_DYNFLOW_V1.txt`.
+- OIA proof: `oia_loaded=true`, `oia_source=model`, `oia_source_dim=384`, `oia_prior_shape=32x384`, checkpoint SHA `84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2`.
+- Gradient proof: `gate_gradient_chain.passed=true`, `missing_components=[]`, `frozen_params_with_grad=[]`, `missing_trainable_grad_params=0`.
+- Git proof: local HEAD equals GitHub `acpr_dynflow_v1` HEAD at `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
+- Note: This md append changes HEAD, so final authorization must be rerun after this documentation commit.
