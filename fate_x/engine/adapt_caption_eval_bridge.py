@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import re
+import zipfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -100,6 +102,114 @@ class _TemporaryEvalEnvironment:
                 os.environ[key] = value
 
 
+
+class _WindowsSpiceNativeRuntime:
+    """Make ADAPT SPICE load its bundled LMDB JNI library on Windows."""
+
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+
+    def __enter__(self) -> None:
+        self._old_path = os.environ.get("PATH")
+        self._spice_module = None
+        self._old_check_call = None
+        self._old_cache_dir = None
+        self._old_temp_dir = None
+        if os.name != "nt":
+            return
+        try:
+            from src.evalcap.coco_caption.pycocoevalcap.spice import spice as spice_module
+        except Exception:
+            return
+        spice_dir = Path(spice_module.__file__).resolve().parent
+        lib_dir = spice_dir / "lib"
+        self._prepare_lmdb_dll(lib_dir)
+        os.environ["PATH"] = f"{lib_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+        self._spice_module = spice_module
+        self._old_cache_dir = getattr(spice_module, "CACHE_DIR", None)
+        self._old_temp_dir = getattr(spice_module, "TEMP_DIR", None)
+        spice_module.CACHE_DIR = str(self._cache_dir())
+        spice_module.TEMP_DIR = str(self.output_dir / "spice_tmp")
+        Path(spice_module.CACHE_DIR).mkdir(parents=True, exist_ok=True)
+        Path(spice_module.TEMP_DIR).mkdir(parents=True, exist_ok=True)
+        self._old_check_call = spice_module.subprocess.check_call
+
+        def _check_call(cmd: Any, *args: Any, **kwargs: Any) -> Any:
+            patched_cmd = self._patch_spice_java_command(cmd, lib_dir)
+            return self._old_check_call(patched_cmd, *args, **kwargs)
+
+        spice_module.subprocess.check_call = _check_call
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._spice_module is not None and self._old_check_call is not None:
+            self._spice_module.subprocess.check_call = self._old_check_call
+        if self._spice_module is not None:
+            if self._old_cache_dir is not None:
+                self._spice_module.CACHE_DIR = self._old_cache_dir
+            if self._old_temp_dir is not None:
+                self._spice_module.TEMP_DIR = self._old_temp_dir
+        if self._old_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = self._old_path
+
+    def _cache_dir(self) -> Path:
+        override = os.environ.get("ACPR_DYNFLOW_SPICE_CACHE_ROOT")
+        if override:
+            return Path(override) / "cache"
+        g_root = Path("G:/sbw/FATE_Drive/acpr_dynflow_spice_cache")
+        if g_root.anchor and g_root.exists():
+            return g_root / "cache"
+        return self.output_dir / "spice_cache"
+
+    @staticmethod
+    def _prepare_lmdb_dll(lib_dir: Path) -> None:
+        jar_path = lib_dir / "lmdbjni-win64-0.4.6.jar"
+        if not jar_path.exists():
+            return
+        dll_names = ("lmdbjni.dll", "lmdbjni64-0.4.6.dll", "lmdbjni-0.4.6.dll")
+        existing = [lib_dir / name for name in dll_names]
+        if all(path.exists() for path in existing):
+            return
+        with zipfile.ZipFile(jar_path) as jar:
+            data = jar.read("META-INF/native/windows64/lmdbjni.dll")
+        for path in existing:
+            if not path.exists():
+                path.write_bytes(data)
+
+    @staticmethod
+    def _patch_spice_java_command(cmd: Any, lib_dir: Path) -> Any:
+        if not isinstance(cmd, (list, tuple)) or not cmd:
+            return cmd
+        parts = [str(part) for part in cmd]
+        if parts[0].lower() != "java" or "spice-1.0.jar" not in parts:
+            return cmd
+        # ADAPT's bundled spice.py uses `java -jar -Xmx8G spice-1.0.jar`; make it legal
+        # before injecting the Windows native-library search path.
+        if len(parts) >= 4 and parts[1] == "-jar" and parts[2].startswith("-Xmx"):
+            parts = [parts[0], parts[2], "-jar", parts[3], *parts[4:]]
+        lib_arg = f"-Djava.library.path={lib_dir}"
+        if lib_arg not in parts:
+            parts.insert(1, lib_arg)
+        return parts
+
+class _Utf8DefaultOpen:
+    """Make ADAPT evaluator text reads deterministic on non-UTF8 Windows locales."""
+
+    def __enter__(self) -> None:
+        self._old_open = builtins.open
+
+        def _open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            text_mode = "b" not in mode
+            if text_mode and "encoding" not in kwargs:
+                kwargs["encoding"] = "utf-8"
+            return self._old_open(file, mode, *args, **kwargs)
+
+        builtins.open = _open
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        builtins.open = self._old_open
+
 def run_adapt_sep_caption_eval(
     prediction_rows: Iterable[dict[str, Any]],
     loader: Any,
@@ -128,7 +238,7 @@ def run_adapt_sep_caption_eval(
         }
     outfile = predict_file.with_suffix(".eval.json")
     try:
-        with _TemporaryEvalEnvironment(output_dir):
+        with _TemporaryEvalEnvironment(output_dir), _Utf8DefaultOpen(), _WindowsSpiceNativeRuntime(output_dir):
             result = two_cap_evaluate_on_coco_caption(str(predict_file), str(caption_file), outfile=str(outfile))
     except Exception as exc:
         return {
