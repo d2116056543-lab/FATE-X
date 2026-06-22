@@ -576,3 +576,12 @@ The previous three-record set was too compressed for the amount of work done acr
 - If control metrics are scale-broken, e.g. course RMSE jumps from single digits to around 89, fix the eval/data bridge before training.
 - If generated-text metrics are unavailable, do not save a best-text checkpoint.
 - If a new review pass was generated before a later commit, treat it as stale.
+### Post-commit DynFlow final preflight evidence - 2026-06-23 05:17:35 +08:00
+- Checked HEAD before recording: $head.
+- GitHub branch state before recording: $remote.
+- Final preflight/audit directory inspected: .background_runs/acpr_dynflow_v1_final_preflight_20260623_0515.
+- eview_report.json: passed=true, lockers=[], missing_reports=[], ailed_reports=[].
+- git_provenance.json: branch cpr_dynflow_v1, local HEAD equals GitHub HEAD, clean worktree.
+- oia_predicate_transfer_audit.json: oia_loaded=true, source model, source dim 384, checkpoint SHA 84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2.
+- gate_gradient_chain.json: passed=true, missing_components=[], missing_trainable_grad_params=0, rozen_params_with_grad=[].
+- Important: this documentation append changes Git HEAD after the 0515 pass. Therefore a new final preflight/audit must be run again after committing this section; the latest run directory, not this paragraph alone, is the binding proof.

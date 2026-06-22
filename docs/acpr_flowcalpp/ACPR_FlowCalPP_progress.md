@@ -663,3 +663,9 @@ Generated: 2026-06-23 00:12:56
 7. Run python -m fate_x.engine.audit_acpr_dynflow --repo_root . --config configs/acpr_dynflow_v1_bddx_32f_224.yaml --output_dir <new_final_preflight_dir> --write_review_pass.
 8. Confirm local HEAD, GitHub HEAD, and review-pass provenance all match.
 9. Only after these checks, run formal training or a bounded real-data train/eval smoke.
+### 9. Post-commit final preflight and audit - 2026-06-23 05:17:35 +08:00
+- After committing the train/eval honesty patch and the expanded records, ran DynFlow final preflight on .background_runs/acpr_dynflow_v1_final_preflight_20260623_0515.
+- PREFLIGHT_EXIT=0 and AUDIT_EXIT=0.
+- Compact report: passed=true, lockers=[], missing_reports=[], ailed_reports=[].
+- Confirmed OIA audit from oia_predicate_transfer_audit.json and gradient audit from gate_gradient_chain.json.
+- This section will be committed as documentation, then another final preflight must be run for the final post-doc HEAD.

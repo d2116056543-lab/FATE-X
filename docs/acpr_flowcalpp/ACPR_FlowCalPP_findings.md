@@ -491,3 +491,7 @@ Do not continue this training run. Before another full run:
 - Adding traffic-flow modules before proving baseline checkpoint metric preservation made it hard to distinguish module failure from resume/eval mismatch.
 - Using paper numbers without checking local reproduction history led to misleading interpretations.
 - Future work must follow this order: pure checkpoint eval -> smoke train/eval -> short staged run -> only then full training.
+### Post-commit DynFlow review finding - 2026-06-23 05:17:35 +08:00
+- The 0515 final preflight proved the current code path at HEAD $head had no review blockers, loaded the real OIA predicate queries, and had a valid gradient chain.
+- The OIA report filename is oia_predicate_transfer_audit.json; using oia_predicate_transfer_report.json was only an inspection-script filename mistake, not a preflight failure.
+- Because documentation itself changes HEAD, final pass evidence must always be regenerated after the last commit. This is now an explicit process requirement for future work.
