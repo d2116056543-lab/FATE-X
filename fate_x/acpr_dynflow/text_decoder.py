@@ -65,13 +65,39 @@ class DynFlowTextDecoder(nn.Module):
         flat_logits = logits.reshape(-1, logits.shape[-1])[: flat_target.numel()]
         return F.cross_entropy(flat_logits[valid], flat_target[valid].clamp_max(logits.shape[-1] - 1))
 
+    def _masked_position_loss(
+        self,
+        logits: Tensor,
+        masked_pos: Tensor | None,
+        masked_ids: Tensor | None,
+        start: int,
+        end: int,
+    ) -> Tensor:
+        if masked_ids is None or masked_ids.numel() == 0:
+            return logits.sum() * 0.0
+        if masked_pos is None or masked_pos.numel() == 0:
+            target = masked_ids[:, start:end] if masked_ids.dim() == 2 and masked_ids.shape[1] >= end else masked_ids
+            return self._loss(logits[:, start:end], target)
+        positions = masked_pos.to(logits.device).long()
+        targets = masked_ids.to(logits.device).long()
+        if positions.dim() == 1:
+            positions = positions.unsqueeze(0).expand(logits.shape[0], -1)
+        if targets.dim() == 1:
+            targets = targets.unsqueeze(0).expand(logits.shape[0], -1)
+        valid = targets.ge(0) & positions.ge(start) & positions.lt(end) & positions.lt(logits.shape[1])
+        if not bool(valid.any()):
+            return logits.sum() * 0.0
+        gather_pos = positions.clamp(0, logits.shape[1] - 1).unsqueeze(-1).expand(-1, -1, logits.shape[-1])
+        gathered_logits = logits.gather(1, gather_pos)
+        return F.cross_entropy(gathered_logits[valid], targets[valid].clamp_max(logits.shape[-1] - 1))
+
     def _base_hidden(self, ids: Tensor) -> Tensor:
         if self.bert is not None:
             attention = torch.ones_like(ids, dtype=torch.long)
             return self.bert(input_ids=ids.clamp_min(0).clamp_max(self.vocab_size - 1), attention_mask=attention).last_hidden_state
         return self.token_embed(ids.clamp_min(0).clamp_max(self.vocab_size - 1))
 
-    def forward(self, input_ids: Tensor | None, masked_ids: Tensor | None, flow: TrafficFlowState, ledger: DecisionLedger, visual_tokens: Tensor | None = None) -> DynFlowTextOutput:
+    def forward(self, input_ids: Tensor | None, masked_pos: Tensor | None, masked_ids: Tensor | None, flow: TrafficFlowState, ledger: DecisionLedger, visual_tokens: Tensor | None = None) -> DynFlowTextOutput:
         b = flow.factor_tokens.shape[0]
         length = input_ids.shape[1] if input_ids is not None else 30
         ids = input_ids if input_ids is not None else torch.zeros(b, length, dtype=torch.long, device=flow.factor_tokens.device)
@@ -87,8 +113,8 @@ class DynFlowTextDecoder(nn.Module):
         action_logits = self.action_lm(ctx)
         explanation_logits = self.explanation_lm(ctx)
         midpoint = max(1, length // 2)
-        action_loss = self._loss(action_logits[:, :midpoint], masked_ids)
-        explanation_loss = self._loss(explanation_logits[:, midpoint:], masked_ids)
+        action_loss = self._masked_position_loss(action_logits, masked_pos, masked_ids, 0, midpoint)
+        explanation_loss = self._masked_position_loss(explanation_logits, masked_pos, masked_ids, midpoint, length)
         attn_base = flow.factor_probs
         if attn_base.shape[1] != length:
             attn_base = F.interpolate(attn_base.permute(0, 2, 1), size=length, mode="linear", align_corners=False).permute(0, 2, 1)

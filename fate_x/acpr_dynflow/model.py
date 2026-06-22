@@ -114,7 +114,7 @@ class ACPRDynFlowModel(nn.Module):
             flow.lag_aligned_tokens = flow.factor_tokens.repeat_interleave((32 + flow.factor_tokens.shape[1] - 1) // flow.factor_tokens.shape[1], dim=1)[:, :32]
         global_norm, global_state = self.global_decision(bb.global_sequence)
         ledger = self.ledger_head(global_norm, flow, self.codec)
-        text = self.text_decoder(batch.input_ids, batch.masked_ids, flow, ledger, visual_tokens=bb.text_visual_tokens)
+        text = self.text_decoder(batch.input_ids, batch.masked_pos, batch.masked_ids, flow, ledger, visual_tokens=bb.text_visual_tokens)
         losses: dict[str, Tensor] = {}
         if batch.control_target is not None:
             target_norm = self.codec.encode(batch.control_target.to(ledger.final_prediction_normalized.device).float())
