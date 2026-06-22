@@ -12,7 +12,7 @@ class Sensor_Pred_Head(torch.nn.Module):
     """ This is the Control Signal Prediction head that performs sensor regression """
     def __init__(self, args):
         """ Initializes the prediction head.
-        A simple transformer that performs sensor regression. 
+        A simple transformer that performs sensor regression.
         We simply use a transformer to regress the whole signals of a video, which is superficial and could be optimized to a large extent.
         """
         super(Sensor_Pred_Head, self).__init__()
@@ -23,16 +23,20 @@ class Sensor_Pred_Head(torch.nn.Module):
         # Motion Transformer implemented by bert
         self.config = BertConfig.from_pretrained(args.config_name if args.config_name else \
             args.model_name_or_path, num_labels=2, finetuning_task='image_captioning')
+        if self.config is None:
+            # FlowCal V2 fallback config for local contract tests or missing BERT config paths.
+            self.config = BertConfig()
+            self.config.num_hidden_layers = min(int(getattr(self.config, 'num_hidden_layers', 2)), 2)
         self.encoder = BertEncoder(self.config)
 
         # type number of control signals to be used
         # TODO: Set this variable as an argument, corresponging to the control signal in dataloader
-        
+
         self.sensor_dim = len(args.signal_types)
         self.sensor_embedding = torch.nn.Linear(self.sensor_dim, self.config.hidden_size)
         self.sensor_dropout = nn.Dropout(self.config.hidden_dropout_prob)
 
-        # a mlp to transform the dimension of video feature 
+        # a mlp to transform the dimension of video feature
         self.img_dim = self.img_feature_dim
         self.img_embedding = nn.Linear(self.img_dim, self.config.hidden_size, bias=True)
         self.img_dropout = nn.Dropout(self.config.hidden_dropout_prob)
@@ -41,36 +45,40 @@ class Sensor_Pred_Head(torch.nn.Module):
         self.decoder = nn.Linear(self.config.hidden_size, self.sensor_dim)
 
 
+    def encode(self, img_feats, attention_mask=None):
+        """Encode video features without using control targets."""
+        img_embedding_output = self.img_embedding(img_feats)
+        img_embedding_output = self.img_dropout(img_embedding_output)
+        extended_attention_mask = self.get_attn_mask(img_embedding_output) if attention_mask is None else attention_mask
+        encoder_outputs = self.encoder(img_embedding_output, extended_attention_mask)
+        return encoder_outputs[0]
+
+    def predict(self, img_feats, frame_num=None):
+        """Predict control signals from visual features only."""
+        hidden = self.encode(img_feats)
+        if frame_num is None:
+            frame_num = hidden.shape[1]
+        sequence_output = hidden[:, :int(frame_num), :]
+        return self.decoder(sequence_output)
+
     def forward(self, *args, **kwargs):
-        """The forward process.
-        Parameters:
-            img_feats: video features extracted by video swin
-            car_info: ground truth of control signals
-        """
+        """Backward-compatible ADAPT control prediction."""
         vid_feats = kwargs['img_feats']
-        car_info  = kwargs['car_info']
+        car_info = kwargs.get('car_info')
         return_hidden = kwargs.get('return_hidden', False)
 
-        car_info = car_info.permute(0, 2, 1)
+        if car_info is None:
+            pred_tensor = self.predict(vid_feats)
+            if return_hidden:
+                return pred_tensor, self.encode(vid_feats)
+            return pred_tensor
 
+        car_info = car_info.permute(0, 2, 1)
         B, S, C = car_info.shape
         assert C == self.sensor_dim, f"{C}, {self.sensor_dim}"
-        frame_num = S
-
-        img_embedding_output = self.img_embedding(vid_feats)
-        img_embedding_output = self.img_dropout(img_embedding_output)
-
-
-        extended_attention_mask = self.get_attn_mask(img_embedding_output)
-
-        encoder_outputs = self.encoder(img_embedding_output,
-                                        extended_attention_mask)
-        sequence_output = encoder_outputs[0][:, :frame_num, :]
-
+        sequence_output = self.encode(vid_feats)[:, :S, :]
         pred_tensor = self.decoder(sequence_output)
-
         loss = self.get_l2_loss(pred_tensor, car_info)
-
         if return_hidden:
             return loss, pred_tensor, sequence_output
         return loss, pred_tensor

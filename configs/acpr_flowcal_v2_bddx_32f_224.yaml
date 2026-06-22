@@ -1,0 +1,468 @@
+config_version: acpr_flowcal_v2
+experiment_name: acpr_flowcal_v2_bddx_32f_224
+protocol_tag: test_selected_user_requested
+
+repository:
+  expected_worktree: E:/sbw/FATE_Drive/fate_x_flowtrace_pmt_v1_worktree
+  expected_branch: flowtrace_pmt_v1
+  github_remote: github
+  require_clean_worktree: true
+  require_remote_sha_match: true
+  forbid_new_worktree: true
+  forbid_new_branch: true
+
+paths:
+  train_yaml: datasets_part/BDDX/training_32frames.yaml
+  test_yaml: datasets/BDDX/testing_32frames.yaml
+  signal_test_yaml: datasets_part/BDDX/testing_32frames.yaml
+  adapt_checkpoint: checkpoints/basemodel/checkpoints/model.bin
+  bert_dir: models/captioning/bert-base-uncased
+  video_swin_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
+  output_root: E:/sbw/FATE_Drive/active_runs
+  predicate_config: configs/acpr_flow_local_predicates.yaml
+  flow_factor_config: configs/acpr_flow_factors.yaml
+  text_rule_config: configs/acpr_flow_text_rules.yaml
+  historical_text_best_candidates:
+    - E:/sbw/FATE_Drive/active_runs/acpr_linux_b4w4_resume_epoch5_foreground_20260620_185230/train/checkpoint_best_text.pth
+    - E:/sbw/FATE_Drive/active_runs/acpr_linux_b4w4_resume_epoch5_foreground_20260620_185230/train/checkpoint_best_test.pth
+    - E:/sbw/FATE_Drive/active_runs/acpr_linux_b4w4_resume_epoch5_foreground_20260620_185230/train/checkpoint_latest.pth
+  strict_v1_candidates:
+    - E:/sbw/FATE_Drive/active_runs/acpr_linux_b4w4_resume_envfix_20260621_065540/train/checkpoint_best_test.pth
+    - E:/sbw/FATE_Drive/active_runs/acpr_linux_b4w4_resume_envfix_20260621_065540/train/checkpoint_latest.pth
+
+data:
+  max_num_frames: 32
+  image_resolution: 224
+  direct_image_training: true
+  feature_cache_enabled: false
+  token_cache_enabled: false
+  build_cache_before_training: false
+  use_sep_cap: true
+  action_max_tokens: 15
+  explanation_max_tokens: 15
+  max_seq_length: 30
+  mask_prob: 0.5
+  max_masked_tokens: 45
+  attn_mask_type: learn_vid_att
+  signals: [course, speed]
+  invalid_control_value: -1.0
+  num_workers: 4
+  allow_windows_workers: false
+  pin_memory: true
+  persistent_workers: true
+  train_calib_fraction: 0.10
+  train_calib_seed: 20260621
+  formal_eval_splits: [test]
+
+initialization:
+  prefer_historical_text_best: true
+  fallback_to_adapt: true
+  reject_tmp_checkpoints: true
+  strict_baseline_load: true
+  allowed_v2_missing_prefixes:
+    - lane_flow_field.
+    - axis_aware_flow.
+    - semantic_gradient_firewall.
+    - axis_control_adapter.
+    - contextual_reason_target.
+    - prefix_future.
+    - scst.
+  migrate_predicate_queries: true
+  migrate_original_13_flow_factors: true
+  migrate_reason_semantics: true
+  initialize_speed_reader_from_v1_when_compatible: true
+
+model:
+  state_dim: 256
+  text_hidden_dim: 768
+
+  backbone:
+    type: adapt_video_swin_multiscale
+    single_forward_per_batch: true
+    fine_stage: 2
+    coarse_stage: 3
+    temporal_align_to_frames: 32
+    fusion: additive_layernorm
+    preserve_dense_adapt_tokens: true
+
+  transport:
+    type: local_partial_v2
+    global_shift_radius: 2
+    local_radius: 2
+    local_candidates: 25
+    dustbin: true
+    matching_dim: 64
+    spatial_penalty: 0.25
+    force_fp32_scores: true
+    column_normalization: false
+    no_wrap_boundaries: true
+
+  predicates:
+    num_predicates: 32
+    assignment: entmax15
+    region_prior: true
+    transported_prior: true
+    transported_beta_max: 1.5
+    temperature_min: 0.2
+    temperature_max: 5.0
+    descriptor: temporal_moments_v2
+
+  lane_flow:
+    enabled: true
+    regions: [left, center, right]
+    geometry_prior: soft_corridors
+    refine_with_drivable_predicates: true
+    temporal_encoder: depthwise_gated_conv
+    temporal_kernel: 5
+    temporal_layers: 2
+    call_outputs_physical_density: false
+
+  flow:
+    semantic_factors: 13
+    num_regime: 4
+    num_phase: 4
+    num_source: 5
+    axis_names: [longitudinal, lateral]
+    direction_names: [left, neutral, right]
+    assignment: entmax15
+    use_grammar_prior: true
+    use_lane_support: true
+    weak_axis_direction_supervision: true
+
+  reason_target:
+    mode: frozen_contextual_bert_action_subspace
+    contextual_layers: 4
+    action_subspace_rank: 16
+    pair_projection_strength: 0.50
+    global_projection_strength: 0.50
+    update_from_train_only: true
+    target_detached: true
+    saved_text_embedding_cache: false
+
+  pu:
+    rules_from_yaml: true
+    semantic_recovery_unknown_weight: 0.0
+    later_unknown_weight: 0.005
+    unknown_mode: group_normalized_activation_regularizer
+
+  reason_memory:
+    predicate_tokens: 32
+    semantic_flow_tokens: 13
+    lane_tokens: 3
+    axis_tokens: 2
+    direction_tokens: 3
+    null_tokens: 1
+    total_tokens: 54
+    hidden_dim: 768
+    aggregation: confidence_aware_query
+    typed_lineage: true
+
+  firewall:
+    enabled: true
+    explanation_gradient_scale: 1.0
+    action_gradient_scale: 0.20
+    speed_gradient_scale: 0.075
+    course_gradient_scale: 0.075
+    representation_pcgrad: true
+    eps: 1.0e-8
+
+  seca:
+    enabled: true
+    attention: entmax15
+    null_reason_token: true
+    separate_action_explanation_readers: true
+    output_projection_init: xavier
+    action_gate_init: 0.0
+    explanation_gate_init: 0.0
+    action_gate_max: 0.08
+    explanation_gate_max: 0.25
+    text_hidden_only: true
+    hook_location: pre_lm_prediction_head
+
+  motion:
+    base: released_adapt_sensor_pred_head
+    target_independent_predict_api: true
+    expose_hidden: true
+    load_from_adapt_checkpoint: true
+
+  control_adapter:
+    enabled: true
+    attention: entmax15
+    separate_speed_course_readers: true
+    speed_memory: longitudinal
+    course_memory: lateral
+    gate_init: 0.0
+    max_residual_std_fraction: 0.15
+    direct_flow_bypass: false
+    circular_course: true
+
+  prefix_future:
+    enabled: true
+    prefix_frames: 24
+    target_frames: 8
+    batch_fraction: 0.25
+    reuse_backbone_grids: true
+    recompute_state_from_prefix: true
+
+  hardpair:
+    enabled: true
+    queue_size: 4096
+    max_pairs_per_batch: 32
+    start_epoch: 8
+    margin: 0.20
+    action_similarity_min: 0.75
+    reason_similarity_max: 0.35
+    contradiction_min: 0.25
+    gradient_budget_ratio: 0.05
+
+  scst:
+    enabled: true
+    start_epoch: 13
+    batch_fraction: 0.25
+    sample_top_p: 0.90
+    cider_weight: 0.70
+    meteor_weight: 0.30
+    hallucination_penalty: 0.10
+    ce_weight: 0.50
+    rl_weight: 0.10
+    action_preserve_weight: 0.10
+
+loss:
+  action_text: 1.0
+  explanation_text: 1.0
+  speed_normalized: 0.03
+  course_normalized: 0.03
+  predicate_pu: 0.03
+  flow_pu: 0.03
+  reason_semantic: 0.08
+  transport_consistency: 0.01
+  lane_temporal_consistency: 0.01
+  axis_direction_weak: 0.01
+  prefix_future: 0.01
+  action_delta_kl: 0.08
+  explanation_delta_kl: 0.03
+  parameter_anchor: 0.0001
+  memory_diversity: 0.0005
+
+stages:
+  - name: semantic_recovery
+    epochs: [0, 1, 2]
+    train:
+      - transport
+      - predicate_tracker
+      - lane_flow_field
+      - axis_aware_flow
+      - reason_memory
+      - explanation_seca
+    freeze:
+      - video_swin
+      - adapt_fc
+      - captioning_bert
+      - lm_head
+      - adapt_motion
+      - axis_control_adapter
+      - prefix_future
+    enable_control_losses: false
+    hardpair_enabled: false
+    unknown_weight: 0.0
+
+  - name: axis_aware_motion
+    epochs: [3, 4, 5, 6, 7]
+    train:
+      - transport
+      - predicate_tracker
+      - lane_flow_field
+      - axis_aware_flow
+      - reason_memory
+      - axis_control_adapter
+      - prefix_future
+    freeze:
+      - video_swin
+      - adapt_fc
+      - captioning_bert
+      - lm_head
+      - adapt_motion
+      - temporal_seca
+    enable_control_losses: true
+    hardpair_enabled: false
+    unknown_weight: 0.005
+
+  - name: conflict_aware_joint
+    epochs: [8, 9, 10, 11, 12]
+    train:
+      - all_v2_modules
+      - bert_layer_11
+      - video_swin_final_stage
+      - adapt_motion_final_layer
+      - adapt_motion_decoder
+    enable_control_losses: true
+    hardpair_enabled: true
+    firewall_enabled: true
+    unknown_weight: 0.005
+
+  - name: explanation_scst
+    epochs: [13, 14]
+    train:
+      - explanation_seca
+      - bert_layer_11
+      - lm_head
+    freeze:
+      - all_visual_state_modules
+      - adapt_motion
+      - axis_control_adapter
+      - action_seca
+    scst_enabled: true
+    hardpair_enabled: false
+
+optimization:
+  optimizer: adamw
+  precision: bf16
+  allow_fp16_fallback: true
+  fp16_initial_loss_scale: 4096
+  gradient_checkpointing: true
+  gradient_clip_norm: 1.0
+  stage_scheduler:
+    type: warmup_cosine
+    warmup_ratio: 0.05
+    min_lr_ratio: 0.10
+    save_restore_state: true
+
+  learning_rates:
+    transport: 0.00005
+    predicate_tracker: 0.00005
+    lane_flow_field: 0.00010
+    axis_aware_flow: 0.00005
+    reason_memory: 0.00005
+    temporal_seca: 0.00002
+    axis_control_adapter: 0.00002
+    prefix_future: 0.00002
+    hardpair_projection: 0.00001
+    bert_layer_11: 0.000005
+    video_swin_final_stage: 0.000002
+    adapt_motion_final_layer: 0.000002
+    adapt_motion_decoder: 0.000005
+    lm_head_scst: 0.000002
+
+  weight_decay:
+    new_modules: 0.01
+    backbone: 0.05
+    bias_norm_gate: 0.0
+
+training:
+  epochs: 15
+  metric_based_early_stop: false
+  checkpoint_every_steps: 500
+  save_latest_before_eval: true
+  atomic_checkpoints: true
+  reject_tmp_resume: true
+  update_context_records: true
+
+sequence_calalign:
+  enabled: true
+  fit_split: train_calib
+  fit_uses_test: false
+  alpha_action: [0.0, 0.025, 0.05, 0.075, 0.10]
+  alpha_explanation: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25]
+  alpha_speed: [0.0, 0.05, 0.10, 0.15, 0.20]
+  alpha_course: [0.0, 0.05, 0.10, 0.15, 0.20]
+  temperature_action: [0.85, 0.925, 1.0, 1.075, 1.15]
+  temperature_explanation: [0.85, 0.925, 1.0, 1.075, 1.15]
+
+memory_probe:
+  main_candidates:
+    - {batch_size: 6, gradient_accumulation_steps: 6}
+    - {batch_size: 5, gradient_accumulation_steps: 7}
+    - {batch_size: 4, gradient_accumulation_steps: 8}
+    - {batch_size: 3, gradient_accumulation_steps: 11}
+    - {batch_size: 2, gradient_accumulation_steps: 16}
+  scst_candidates:
+    - {batch_size: 3, gradient_accumulation_steps: 11}
+    - {batch_size: 2, gradient_accumulation_steps: 16}
+    - {batch_size: 1, gradient_accumulation_steps: 32}
+  warmup_steps: 3
+  measured_steps: 30
+  preferred_peak_reserved_gib: [30, 42]
+  hard_peak_reserved_limit_gib: 44.5
+  select_largest_stable: true
+  dummy_allocation_forbidden: true
+
+evaluation:
+  after_every_epoch: true
+  eval_splits: [test]
+  best_selection_split: test
+  beam_size_formal: 1
+  beam_size_smoke: 1
+  smoke_before_full: true
+  smoke_max_eval_samples: 32
+  control_smoke_max_eval_samples: 64
+  adapt_control_safety_ratio: 1.02
+  primary_best: explanation_first_control_safe_lexicographic
+  save_best:
+    - text
+    - explanation
+    - control
+    - joint
+    - test
+  metric_based_early_stop: false
+
+faithfulness:
+  run_after_training: true
+  interventions:
+    - all_flow_off
+    - longitudinal_flow_off
+    - lateral_flow_off
+    - top_factor_off
+    - predicate_off
+    - evidence_tube_off
+    - random_equal_mass
+    - temporal_shuffle
+    - temporal_reverse
+    - last_frame_only
+    - prefix
+  random_equal_mass_trials: 5
+  prefix_lengths: [8, 16, 24, 32]
+  bootstrap_trials: 1000
+  permutation_trials: 1000
+  conditional_subsets:
+    - all
+    - longitudinal
+    - lateral
+    - turn_left
+    - turn_right
+    - merge
+    - traffic_signal
+    - queue_following
+
+visualization:
+  fixed_cases_per_epoch: 8
+  best_checkpoint_cases: 256
+  keyframes_per_canvas: 8
+  canvas_png: true
+  source_json: true
+  atlas_html: true
+  manual_boxes_forbidden: true
+  placeholder_maps_forbidden: true
+
+preflight:
+  review_pass_dir: .background_runs/acpr_flowcal_v2_preflight
+  review_pass_file: REVIEW_PASS_ACPR_FLOWCAL_V2.txt
+  direct_image_smoke_steps: 8
+  mechanism_subset_samples: 128
+  require_adapt_equivalence: true
+  require_temporal_necessity: true
+  require_real_intervention: true
+  require_visual_canvas: true
+  require_atlas: true
+
+supervisor:
+  foreground_only: true
+  heartbeat_seconds: 60
+  metric_based_stop: false
+  transient_retry_count: 3
+  oom_fallback: true
+  resume_latest: true
+  require_review_pass: true
+  require_clean_worktree: true
+  require_remote_sha_match: true
+  user_stop_sentinel: control/STOP_REQUESTED_BY_USER
+  complete_only_after_full_suite: true

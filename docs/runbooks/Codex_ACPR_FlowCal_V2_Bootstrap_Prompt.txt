@@ -1,0 +1,83 @@
+你现在位于：
+
+E:\sbw\FATE_Drive\fate_x_flowtrace_pmt_v1_worktree
+
+目标仓库/分支：
+
+d2116056543-lab/FATE-X
+flowtrace_pmt_v1
+
+不要创建新 worktree，不要创建新 branch。直接在当前 worktree 和当前 branch 实现 ACPR-FlowCal++ V2，并同步到 GitHub 的同名 branch。
+
+开始前必须完整阅读：
+
+1. E:\sbw\FATE_Drive\task_plan.md
+2. E:\sbw\FATE_Drive\findings.md
+3. E:\sbw\FATE_Drive\progress.md
+4. docs/acpr_flowcalpp/ACPR_FlowCalPP_task_plan.md
+5. docs/acpr_flowcalpp/ACPR_FlowCalPP_findings.md
+6. docs/acpr_flowcalpp/ACPR_FlowCalPP_progress.md
+7. docs/runbooks/ACPR_FlowCal_V2_Implementation_Plan.md
+8. .codex/skills/acpr-flowcal-v2-implementation-audit/SKILL.md
+9. configs/acpr_flowcal_v2_bddx_32f_224.yaml
+
+必须使用已安装的 Superpowers 技能完成：
+
+- writing-plans
+- test-driven-development
+- executing-plans
+- systematic-debugging
+- verification-before-completion
+- requesting-code-review（或等价独立审查技能）
+
+执行规则：
+
+1. 先检查当前 Git 状态、分支、local SHA 与 github/flowtrace_pmt_v1 SHA。
+2. 如果当前 worktree 有未提交改动，逐项审查，保存 diff 快照，测试后提交 safety snapshot 并推送；禁止 reset --hard、clean -fd 或丢弃未知改动。
+3. 用 Superpowers writing-plans 把正式 V2 计划拆成可检查的实施清单，但不得删减或替换架构合同。
+4. 创建独立 V2 正式 import graph：
+   fate_x.engine.train_acpr_flowcal_v2
+   fate_x.acpr_flow_v2.model
+   旧 V1 可保留作对照，但 V2 trainer 不得导入旧 ACPRFlowModel/FlowTrace PMT。
+5. 严格按计划先写失败测试，再实现。每个组件必须有：执行证据、梯度证据、干预证据、输出 schema。
+6. 不生成图像/视频 feature cache，也不生成 token cache；正式训练直接读取 [B,32,3,224,224]。
+7. 修复当前实现中：
+   - stage YAML 没有实际执行；
+   - control 没用真实 ADAPT sensor head；
+   - transport 没进入 predicate tracking；
+   - reason memory 等权平均；
+   - text mask 参数偏离 ADAPT；
+   - scheduler 只配置未执行；
+   - Sequence-CalAlign 不完整/未调用；
+   - intervention/Canvas/Atlas 占位；
+   - HardPair/unknown/future-control schedule 未真实执行。
+8. 实现完成后，启动一个独立 reviewer 角色，严格使用：
+   .codex/skills/acpr-flowcal-v2-implementation-audit/SKILL.md
+   不得由 implementer 自己宣称通过。
+9. 每个 blocker 必须先写回归测试，再修复、提交、推送、重新审查。
+10. 只有以下文件存在且绑定当前 clean pushed SHA 时才能开始正式训练：
+    .background_runs/acpr_flowcal_v2_preflight/REVIEW_PASS_ACPR_FLOWCAL_V2.txt
+11. 训练前做 BF16 直接图片显存探测，选择最大稳定 micro-batch，目标 30–42 GiB，硬上限 44.5 GiB；禁止 dummy allocation。
+12. 正式训练固定 15 epoch：
+    - 0–2 Semantic Recovery
+    - 3–7 Axis-Aware Motion
+    - 8–12 Conflict-Aware Joint
+    - 13–14 Explanation SCST
+    然后 train-calib Sequence-CalAlign 和最终 test。
+13. 每个 epoch 结束：
+    - 先原子保存 checkpoint_latest；
+    - 只评估 test；
+    - 保存 best_text/best_explanation/best_control/best_joint/best_test；
+    - 不做 metric early stop；
+    - 继续下一 epoch。
+14. best_test 必须使用计划中的 explanation-first control-safe test 选择器。
+15. 审核通过后，使用 scripts/FATE_X_acpr_flowcal_v2_foreground.ps1 以前台附着方式启动 supervisor。
+16. 禁止 Start-Process、Start-Job、nohup、shell &、隐藏窗口、detached process。
+17. supervisor 必须实时输出 stdout/stderr、60 秒 heartbeat、检查 epoch artifacts、OOM fallback、latest resume。
+18. 未收到用户停止命令，不得因为指标下降、运行耗时、单次可恢复错误而停止。可恢复错误必须 systematic-debugging、回归测试、提交推送、重新完整审查、从 latest 恢复。
+19. 若代码发生任何修改，旧 REVIEW_PASS 立即失效。
+20. 只有完整训练、最终 test、干预审计、Canvas/Atlas、最终记录全部完成后，任务才可以自然结束。
+21. 全程把训练/实验计划、过程、结果和失败更新到既有 task_plan/findings/progress 文件，不另建训练状态 md。
+22. 所有代码、测试、配置、计划和 skill 推送 GitHub；datasets、checkpoint、.background_runs、logits、visuals 不提交。
+
+现在先执行上下文读取、Git 安全检查和 Superpowers 实施计划审查。不要先启动训练。

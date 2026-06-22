@@ -1,0 +1,308 @@
+diff --git a/fate_x/engine/train_acpr_flowcal_pp.py b/fate_x/engine/train_acpr_flowcal_pp.py
+index 1e8be00..64d4b71 100644
+--- a/fate_x/engine/train_acpr_flowcal_pp.py
++++ b/fate_x/engine/train_acpr_flowcal_pp.py
+@@ -6,7 +6,7 @@ import json
+ import time
+ from pathlib import Path
+-from typing import Any
++from typing import Any
+ from types import SimpleNamespace
+@@ -226,6 +226,140 @@ def _texts_to_padded_embeddings(texts: list[str], tokenizer, word_embedding_weig
+     return F.embedding(ids_tensor, word_embedding_weight), mask
+
+
++def save_training_checkpoint(
++    output_dir: str | Path,
++    model: torch.nn.Module,
++    optimizer: torch.optim.Optimizer,
++    *,
++    epoch_idx: int,
++    global_step: int,
++    optimizer_step: int,
++    gradient_accumulation_steps: int,
++    update_best: bool = False,
++    eval_report: dict[str, Any] | None = None,
++    epoch_complete: bool = False,
++) -> None:
++    """Save latest every time and best only when a real eval metric improves."""
++
++    out = Path(output_dir)
++    out.mkdir(parents=True, exist_ok=True)
++    payload = {
++        "model": model.state_dict(),
++        "optimizer": optimizer.state_dict(),
++        "epoch": int(epoch_idx),
++        "epoch_complete": bool(epoch_complete),
++        "global_step": int(global_step),
++        "optimizer_step": int(optimizer_step),
++        "gradient_accumulation_steps": int(gradient_accumulation_steps),
++        "eval_report": eval_report,
++    }
++    torch.save(payload, out / "checkpoint_latest.pth")
++    if update_best:
++        torch.save(payload, out / "checkpoint_best_test.pth")
++
++
++def load_resume_state(
++    checkpoint_path: str | Path,
++    model: torch.nn.Module,
++    optimizer: torch.optim.Optimizer | None,
++    *,
++    device: str | torch.device,
++) -> dict[str, int | bool | str]:
++    """Load model/optimizer and return counters needed to continue training."""
++
++    path = Path(checkpoint_path)
++    checkpoint = torch.load(path, map_location=device)
++    model.load_state_dict(checkpoint.get("model", checkpoint), strict=False)
++    if optimizer is not None and "optimizer" in checkpoint:
++        optimizer.load_state_dict(checkpoint["optimizer"])
++    epoch = int(checkpoint.get("epoch", -1))
++    epoch_complete = bool(checkpoint.get("epoch_complete", True))
++    return {
++        "checkpoint": str(path),
++        "start_epoch": epoch + 1 if epoch_complete else max(epoch, 0),
++        "global_step": int(checkpoint.get("global_step", 0)),
++        "optimizer_step": int(checkpoint.get("optimizer_step", 0)),
++        "epoch_complete": epoch_complete,
++    }
++
++
++def _mean(values: list[float]) -> float:
++    return float(sum(values) / max(len(values), 1))
++
++
++def write_epoch_eval_artifacts(
++    output_dir: str | Path,
++    epoch_idx: int,
++    eval_report: dict[str, Any],
++    previous_best_metric: float | None,
++) -> tuple[float, bool]:
++    """Persist epoch eval and return updated best metric.
++
++    Metrics are higher-is-better. The current ACPR formal trainer uses the
++    official ADAPT test YAML as split input but reports a loss proxy until the
++    free-generation CIDEr evaluator is wired to the ACPR wrapper.
++    """
++
++    out = Path(output_dir)
++    out.mkdir(parents=True, exist_ok=True)
++    metric = float(eval_report["metric_value"])
++    improved = previous_best_metric is None or metric > float(previous_best_metric)
++    best_metric = metric if improved else float(previous_best_metric)
++    record = dict(eval_report)
++    record.update({"epoch": int(epoch_idx), "is_best": bool(improved), "best_metric_value": best_metric})
++    (out / f"eval_epoch_{epoch_idx:03d}.json").write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
++    with (out / "eval_summary.jsonl").open("a", encoding="utf-8") as f:
++        f.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
++    return best_metric, improved
++
++
++def evaluate_acpr_test_loss(
++    model: ACPRFlowModel,
++    cfg: dict[str, Any],
++    *,
++    split: str,
++    batch_size: int,
++    tokenizer,
++    reason_embedding_weight: torch.Tensor,
++    device: str | torch.device,
++    use_bf16: bool,
++    max_eval_batches: int | None = None,
++) -> dict[str, Any]:
++    """Evaluate on ADAPT's configured test split with teacher-forced losses."""
++
++    loader = build_bddx_acpr_dataloader(cfg, split=split, batch_size=batch_size, max_samples=-1, tokenizer=tokenizer)
++    autocast_device = "cuda" if str(device).startswith("cuda") else "cpu"
++    was_training = model.training
++    model.eval()
++    totals: dict[str, list[float]] = {"total": []}
++    shape_bad = 0
++    norm_bad = 0
++    samples = 0
++    batches = 0
++    with torch.no_grad():
++        for keys, examples, meta in loader:
++            batch = adapt_batch_to_acpr_flow_batch(keys, examples, meta, device=device)
++            reason_semantic_target = build_reason_semantic_target_for_batch(
++                batch.raw_actions,
++                batch.raw_justifications,
++                tokenizer,
++                reason_embedding_weight,
++                device=device,
++                residual_strength=float(cfg.get("model", {}).get("reason_target", {}).get("action_residual_strength", 1.0)),
++            )
++            with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=use_bf16):
++                res = model(batch=batch, reason_semantic_target=reason_semantic_target)
++            if not torch.isfinite(res.total_loss).all():
++                raise FloatingPointError(f"Non-finite eval total loss on split={split}, batch={batches + 1}")
++            reason_norm = reason_semantic_target.norm(dim=-1).mean()
++            if not torch.isfinite(reason_norm).all() or float(reason_norm.detach().cpu()) <= 0.0:
++                raise FloatingPointError(f"Invalid eval reason target norm on split={split}, batch={batches + 1}")
++            if abs(float(reason_norm.detach().cpu()) - 1.0) > 0.05:
++                norm_bad += 1
++            if tuple(batch.frames.shape) != (batch.frames.shape[0], 32, 3, 224, 224):
++                shape_bad += 1
++            totals["total"].append(float(res.total_loss.detach().cpu()))
++            for name, value in res.loss_components.items():
++                totals.setdefault(name, []).append(float(value.detach().cpu()))
++            samples += int(batch.frames.shape[0])
++            batches += 1
++            if max_eval_batches is not None and max_eval_batches > 0 and batches >= max_eval_batches:
++                break
++    if was_training:
++        model.train()
++    total_loss = _mean(totals["total"])
++    components = {name: _mean(values) for name, values in totals.items() if name != "total"}
++    return {
++        "split": split,
++        "adapt_aligned_test_yaml": cfg.get("paths", {}).get("test_yaml"),
++        "metric_family": "loss_proxy_not_cider",
++        "metric_name": f"{split}_neg_total_loss",
++        "metric_value": -total_loss,
++        "total_loss": total_loss,
++        "component_means": components,
++        "samples": samples,
++        "batches": batches,
++        "shape_bad_batches": shape_bad,
++        "reason_norm_bad_batches": norm_bad,
++        "higher_is_better": True,
++    }
++
++
+ def build_reason_semantic_target_for_batch(
+     raw_actions: list[str],
+     raw_justifications: list[str],
+@@ -285,6 +419,7 @@ def train_formal(
+     epochs: int = 1,
+     gradient_accumulation_steps: int = 1,
+     checkpoint_every_steps: int = 500,
++    resume_checkpoint: str | None = None,
+     load_pretrained_backbone: bool = True,
+ ) -> None:
+@@ -315,6 +450,7 @@ def train_formal(
+         "token_cache_enabled": bool(cfg.get("data", {}).get("token_cache_enabled", False)),
+         "precision_requested": str(cfg.get("optimization", {}).get("precision", "fp32")),
+         "started_at_unix": time.time(),
++        "resume_checkpoint": str(resume_checkpoint) if resume_checkpoint else None,
+     }
+@@ -329,6 +465,14 @@ def train_formal(
+     groups, manifest = build_acpr_optimizer_groups(model)
+     opt = torch.optim.AdamW(groups, weight_decay=float(cfg.get("optimization", {}).get("weight_decay", {}).get("new_modules", 0.01)))
+     (out / "optimizer_group_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
++    resume_state = None
++    start_epoch = 0
++    global_step = 0
++    optimizer_step = 0
++    if resume_checkpoint:
++        resume_state = load_resume_state(resume_checkpoint, model, opt, device=device)
++        start_epoch = int(resume_state["start_epoch"])
++        global_step = int(resume_state["global_step"])
++        optimizer_step = int(resume_state["optimizer_step"])
++        (out / "resume_state.json").write_text(json.dumps(resume_state, indent=2, sort_keys=True), encoding="utf-8")
+     tokenizer_cls = _import_bert_tokenizer()
+     tokenizer = tokenizer_cls.from_pretrained(cfg["paths"]["bert_dir"], do_lower_case=True)
+@@ -338,9 +482,9 @@ def train_formal(
+     status = []
+     metrics_path = out / "metrics_summary.jsonl"
+     metrics_file = metrics_path.open("w", encoding="utf-8")
+-    global_step = 0
+-    optimizer_step = 0
+     opt.zero_grad(set_to_none=True)
++    best_test_metric: float | None = None
++    last_eval_report: dict[str, Any] | None = None
+     precision = str(cfg.get("optimization", {}).get("precision", "fp32")).lower()
+@@ -347,24 +491,12 @@ def train_formal(
+     run_manifest["precision_active"] = "bf16" if use_bf16 else "fp32"
++    run_manifest["start_epoch"] = start_epoch
++    run_manifest["initial_global_step"] = global_step
+     (out / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, sort_keys=True), encoding="utf-8")
+-
+-    def _save_checkpoint(epoch_idx: int) -> None:
+-        payload = {
+-            "model": model.state_dict(),
+-            "optimizer": opt.state_dict(),
+-            "epoch": epoch_idx,
+-            "global_step": global_step,
+-            "optimizer_step": optimizer_step,
+-            "gradient_accumulation_steps": gradient_accumulation_steps,
+-        }
+-        torch.save(payload, out / "checkpoint_latest.pth")
+-        torch.save(payload, out / "checkpoint_best_test.pth")
+
+     try:
+-        for epoch in range(epochs):
++        for epoch in range(start_epoch, epochs):
+             for keys, examples, meta in loader:
+@@ -407,7 +539,17 @@ def train_formal(
+                     opt.zero_grad(set_to_none=True)
+                     optimizer_step += 1
+                 if checkpoint_every_steps > 0 and global_step % checkpoint_every_steps == 0:
+-                    _save_checkpoint(epoch)
++                    save_training_checkpoint(
++                        out,
++                        model,
++                        opt,
++                        epoch_idx=epoch,
++                        global_step=global_step,
++                        optimizer_step=optimizer_step,
++                        gradient_accumulation_steps=gradient_accumulation_steps,
++                        update_best=False,
++                        eval_report=last_eval_report,
++                    )
+                 if max_steps > 0 and global_step >= max_steps:
+                     break
+@@ -418,7 +560,32 @@ def train_formal(
+                 opt.step()
+                 opt.zero_grad(set_to_none=True)
+                 optimizer_step += 1
+-            _save_checkpoint(epoch)
++            eval_report = evaluate_acpr_test_loss(
++                model,
++                cfg,
++                split=str(cfg.get("evaluation", {}).get("best_selection_split", "test")),
++                batch_size=int(cfg.get("evaluation", {}).get("eval_batch_size", batch_size)),
++                tokenizer=tokenizer,
++                reason_embedding_weight=reason_embedding_weight,
++                device=device,
++                use_bf16=use_bf16,
++                max_eval_batches=cfg.get("evaluation", {}).get("max_eval_batches"),
++            )
++            last_eval_report = eval_report
++            best_test_metric, improved = write_epoch_eval_artifacts(out, epoch, eval_report, best_test_metric)
++            save_training_checkpoint(
++                out,
++                model,
++                opt,
++                epoch_idx=epoch,
++                global_step=global_step,
++                optimizer_step=optimizer_step,
++                gradient_accumulation_steps=gradient_accumulation_steps,
++                update_best=bool(improved),
++                eval_report=eval_report,
++                epoch_complete=True,
++            )
++            print("ACPR_FLOW_EVAL " + json.dumps({"epoch": epoch, **eval_report, "is_best": improved}, ensure_ascii=True), flush=True)
+             if max_steps > 0 and global_step >= max_steps:
+                 break
+@@ -429,6 +596,8 @@ def train_formal(
+             "max_steps": max_steps,
+             "finished_at_unix": time.time(),
+             "metrics_summary": str(metrics_path),
++            "best_test_metric": best_test_metric,
++            "last_eval_report": last_eval_report,
+         }
+@@ -443,6 +612,7 @@ def main() -> None:
+     parser.add_argument("--beam_size", type=int, default=1)
+     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+     parser.add_argument("--checkpoint_every_steps", type=int, default=500)
++    parser.add_argument("--resume_checkpoint", default=None)
+     parser.add_argument("--no_pretrained_backbone", action="store_true")
+@@ -456,6 +626,7 @@ def main() -> None:
+         args.epochs,
+         args.gradient_accumulation_steps,
+         args.checkpoint_every_steps,
++        resume_checkpoint=args.resume_checkpoint,
+         load_pretrained_backbone=not args.no_pretrained_backbone,
+     )

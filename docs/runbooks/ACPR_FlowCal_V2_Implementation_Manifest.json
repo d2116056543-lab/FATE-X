@@ -1,0 +1,233 @@
+{
+  "formal_entrypoints": [
+    "python -m fate_x.engine.train_acpr_flowcal_v2",
+    "python -m fate_x.engine.eval_acpr_flowcal_v2",
+    "python -m fate_x.engine.run_acpr_flowcal_v2_preflight",
+    "python -m fate_x.engine.audit_acpr_flowcal_v2",
+    "python -m fate_x.engine.supervise_acpr_flowcal_v2_foreground"
+  ],
+  "formal_modules": [
+    "fate_x/acpr_flow_v2/__init__.py",
+    "fate_x/acpr_flow_v2/config.py",
+    "fate_x/acpr_flow_v2/types.py",
+    "fate_x/acpr_flow_v2/adapt_video_backbone.py",
+    "fate_x/acpr_flow_v2/adapt_motion_backbone.py",
+    "fate_x/acpr_flow_v2/local_partial_transport.py",
+    "fate_x/acpr_flow_v2/temporal_predicate_tracker.py",
+    "fate_x/acpr_flow_v2/lane_flow_field.py",
+    "fate_x/acpr_flow_v2/axis_aware_flow_composer.py",
+    "fate_x/acpr_flow_v2/contextual_reason_target.py",
+    "fate_x/acpr_flow_v2/pu_targets.py",
+    "fate_x/acpr_flow_v2/semantic_reason_memory.py",
+    "fate_x/acpr_flow_v2/semantic_gradient_firewall.py",
+    "fate_x/acpr_flow_v2/temporal_seca.py",
+    "fate_x/acpr_flow_v2/axis_aware_control_adapter.py",
+    "fate_x/acpr_flow_v2/temporal_hardpair.py",
+    "fate_x/acpr_flow_v2/prefix_future.py",
+    "fate_x/acpr_flow_v2/sequence_calalign.py",
+    "fate_x/acpr_flow_v2/interventions.py",
+    "fate_x/acpr_flow_v2/model.py",
+    "fate_x/losses/acpr_flowcal_v2_losses.py",
+    "fate_x/losses/explanation_scst.py",
+    "fate_x/engine/acpr_flowcal_v2_data.py",
+    "fate_x/engine/train_acpr_flowcal_v2.py",
+    "fate_x/engine/eval_acpr_flowcal_v2.py",
+    "fate_x/engine/run_acpr_flowcal_v2_preflight.py",
+    "fate_x/engine/audit_acpr_flowcal_v2.py",
+    "fate_x/engine/probe_acpr_flowcal_v2_memory.py",
+    "fate_x/engine/supervise_acpr_flowcal_v2_foreground.py",
+    "fate_x/engine/export_acpr_flowcal_v2_visuals.py",
+    "fate_x/engine/build_acpr_flowcal_v2_atlas.py",
+    "fate_x/explain/acpr_flowcal_v2_renderer.py",
+    "fate_x/explain/acpr_flowcal_v2_atlas.py",
+    "fate_x/explain/acpr_flowcal_v2_faithfulness.py"
+  ],
+  "public_symbols": {
+    "fate_x.acpr_flow_v2.config": [
+      "FlowCalV2Config",
+      "ACPRFlowCalV2Config",
+      "load_flowcal_v2_config",
+      "load_v2_config",
+      "write_resolved_config",
+      "build_config_binding_manifest"
+    ],
+    "fate_x.acpr_flow_v2.types": [
+      "FlowCalV2Batch",
+      "VideoBackboneOutput",
+      "LocalTransportOutput",
+      "PredicateTrajectory",
+      "LaneFlowFieldOutput",
+      "AxisAwareFlowOutput",
+      "SemanticReasonMemory",
+      "FlowCalV2Bundle",
+      "FlowCalV2TrainOutput",
+      "GeneratedSequence",
+      "InterventionSpecV2"
+    ],
+    "fate_x.acpr_flow_v2.adapt_video_backbone": [
+      "ADAPTVideoBackboneV2",
+      "ADAPTVideoBackbone",
+      "_extract_native_stages",
+      "_temporal_align",
+      "_project_dense_tokens",
+      "_fuse_reasoning_grids"
+    ],
+    "fate_x.acpr_flow_v2.adapt_motion_backbone": [
+      "ADAPTMotionBackbone",
+      "ADAPTMotionTransformer"
+    ],
+    "fate_x.acpr_flow_v2.local_partial_transport": [
+      "LocalPartialTransportV2",
+      "warp_source_map_to_current",
+      "expected_transport_displacement"
+    ],
+    "fate_x.acpr_flow_v2.temporal_predicate_tracker": [
+      "TransportedNamedPredicateTracker"
+    ],
+    "fate_x.acpr_flow_v2.lane_flow_field": [
+      "PredicateConditionedLaneFlowField",
+      "build_soft_corridor_masks",
+      "refine_masks_with_drivable_predicates",
+      "aggregate_region_statistics",
+      "temporal_encode_regions"
+    ],
+    "fate_x.acpr_flow_v2.axis_aware_flow_composer": [
+      "AxisAwareFlowComposer",
+      "derive_axis_direction_targets"
+    ],
+    "fate_x.acpr_flow_v2.contextual_reason_target": [
+      "FrozenContextualReasonTarget",
+      "ActionSubspaceTracker"
+    ],
+    "fate_x.acpr_flow_v2.pu_targets": [
+      "FreeTextPUTargetBuilderV2",
+      "positive_unlabeled_loss_v2"
+    ],
+    "fate_x.acpr_flow_v2.semantic_reason_memory": [
+      "SemanticReasonMemoryBuilder",
+      "longitudinal_memory_mask",
+      "lateral_memory_mask"
+    ],
+    "fate_x.acpr_flow_v2.semantic_gradient_firewall": [
+      "scaled_gradient",
+      "representation_pcgrad_surrogate"
+    ],
+    "fate_x.acpr_flow_v2.temporal_seca": [
+      "TemporalSECAV2"
+    ],
+    "fate_x.acpr_flow_v2.axis_aware_control_adapter": [
+      "AxisAwareReasonControlAdapter"
+    ],
+    "fate_x.acpr_flow_v2.temporal_hardpair": [
+      "ContradictionAwareTemporalHardPair"
+    ],
+    "fate_x.acpr_flow_v2.prefix_future": [
+      "PrefixFuturePredictor",
+      "build_prefix_bundle_from_precomputed_grids"
+    ],
+    "fate_x.acpr_flow_v2.sequence_calalign": [
+      "SequenceCalAlignV2Scales",
+      "SequenceCalAlignV2"
+    ],
+    "fate_x.acpr_flow_v2.interventions": [
+      "FlowCalV2InterventionEngine"
+    ],
+    "fate_x.acpr_flow_v2.model": [
+      "ACPRFlowCalV2Model"
+    ],
+    "fate_x.losses.acpr_flowcal_v2_losses": [
+      "shortest_circular_delta",
+      "normalized_control_huber",
+      "transport_consistency_loss",
+      "lane_temporal_consistency_loss",
+      "axis_direction_weak_loss",
+      "delta_kl_loss",
+      "parameter_anchor_loss",
+      "memory_diversity_loss"
+    ],
+    "fate_x.losses.explanation_scst": [
+      "sentence_cider_reward",
+      "sentence_meteor_reward",
+      "hallucination_penalty",
+      "self_critical_explanation_loss"
+    ],
+    "fate_x.engine.acpr_flowcal_v2_data": [
+      "resolve_adapt_text_contract",
+      "build_v2_dataloader",
+      "adapt_batch_to_v2",
+      "stream_train_control_stats",
+      "deterministic_train_calib_ids"
+    ],
+    "fate_x.engine.train_acpr_flowcal_v2": [
+      "StageController",
+      "StageAwareScheduler",
+      "TestBestSelector",
+      "CheckpointMigratorV1ToV2",
+      "build_optimizer_groups",
+      "train_one_epoch",
+      "evaluate_after_epoch",
+      "save_checkpoint_atomic",
+      "load_resume_exact",
+      "run_formal_suite"
+    ]
+  },
+  "config_consumer_map": {
+    "training.epochs": "fate_x.engine.train_acpr_flowcal_v2.run_formal_suite",
+    "evaluation.test_only": "fate_x.engine.eval_acpr_flowcal_v2.evaluate",
+    "direct_image_training": "fate_x.acpr_flow_v2.adapt_video_backbone.ADAPTVideoBackboneV2",
+    "text_contract": "fate_x.engine.acpr_flowcal_v2_data.resolve_adapt_text_contract"
+  },
+  "tests_mapped_to_plan_sections": {
+    "A_existing_files": [
+      "test_v2_adapt_motion_equivalence.py",
+      "test_v2_motion_target_independence.py",
+      "test_v2_seca_segment_readers.py",
+      "test_v2_scst_logprob_reward.py",
+      "test_v2_zero_gate_fallback.py",
+      "test_v2_adapt_video_load.py",
+      "test_v2_adapt_text_contract.py",
+      "test_v2_test_only_protocol.py"
+    ],
+    "B_new_package_files": [
+      "test_v2_required_files.py",
+      "test_v2_model_contract.py"
+    ],
+    "C_losses": [
+      "test_v2_losses_and_eval.py"
+    ],
+    "D_engine": [
+      "test_v2_test_only_protocol.py",
+      "test_v2_audit_static_contract.py"
+    ],
+    "G_manifest": [
+      "test_v2_implementation_manifest.py"
+    ],
+    "29_full_required_names": [
+      "test_v2_plan_required_names.py"
+    ],
+    "30_preflight": [
+      "test_v2_preflight_json_contract.py"
+    ]
+  },
+  "forbidden_import_list": [
+    "fate_x.acpr_flow.model",
+    "fate_x.models.token_pmt_adapter",
+    "fate_x.models.sinkhorn_transport",
+    "fate_x.losses.flowtrace_losses",
+    "fate_x.explain.flowtrace_renderer"
+  ],
+  "expected_tensor_contracts": {
+    "FlowCalV2Batch.frames": "[B,32,3,224,224]",
+    "VideoBackboneOutput.fused_grid": "[B,32,H,W,D]",
+    "PredicateTrajectory.attention": "[B,32,32,H,W]",
+    "SemanticReasonMemory.values": "[B,54,768]",
+    "FlowCalV2TrainOutput.control_final_prediction": "[B,32,2]"
+  },
+  "expected_stage_trainables": {
+    "R": "semantic recovery modules; ADAPT video/text/motion frozen",
+    "M": "axis/control adapters and prefix future enabled; ADAPT motion frozen",
+    "J": "joint fine-tuning with limited backbone layers",
+    "S": "explanation language adapter and final language layer/head only"
+  },
+  "review_pass_path": "REVIEW_PASS_ACPR_FLOWCAL_V2.txt"
+}

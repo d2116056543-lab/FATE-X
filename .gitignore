@@ -6,7 +6,7 @@ _ext
 cpu_soft_nms.egg-info/
 build/
 dist/
-.vscode 
+.vscode
 
 # script
 tmp_all/script/
@@ -40,6 +40,7 @@ linjli
 ./models
 *.jsonl
 *.json
+!docs/runbooks/ACPR_FlowCal_V2_Implementation_Manifest.json
 /checkpoints/
 /output
 *.h5

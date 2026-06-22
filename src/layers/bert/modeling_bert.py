@@ -540,7 +540,7 @@ class BertEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
-    
+
     def set_output_attentions(self, flag):
         for idx in range(len(self.layer)):
             self.layer[idx].attention.self.output_attentions = flag
@@ -1910,12 +1910,12 @@ class BertForImageCaptioning(BertPreTrainedModel):
         self.max_seq_len = max_length
         self.mask_token_id = mask_token_id
         self.prev_encoded_layers = None
-        self.flowtrace_bundle = flowtrace_bundle
-        self.flowtrace_pmt_adapter = flowtrace_pmt_adapter
-        self.flowtrace_pmt_scale = flowtrace_pmt_scale
-        self.acpr_flow_bundle = acpr_flow_bundle
-        self.acpr_temporal_seca = acpr_temporal_seca
-        self.acpr_text_len = acpr_text_len
+        self.__dict__['flowtrace_bundle'] = flowtrace_bundle
+        self.__dict__['flowtrace_pmt_adapter'] = flowtrace_pmt_adapter
+        self.__dict__['flowtrace_pmt_scale'] = flowtrace_pmt_scale
+        self.__dict__['acpr_flow_bundle'] = acpr_flow_bundle
+        self.__dict__['acpr_temporal_seca'] = acpr_temporal_seca
+        self.__dict__['acpr_text_len'] = acpr_text_len
         # NOTE: num_keep_best is not equavilant to num_return_sequences
         # num_keep_best is the number of hypotheses to keep in beam search
         # num_return_sequences is the repeating times of input, coupled with
@@ -2023,7 +2023,7 @@ class BertForImageCaptioning(BertPreTrainedModel):
                     num_beams, use_hypo=use_hypo,
                     decoding_constraint_flag=decoding_constraint_flag,
                     bad_ending_ids=bad_ending_ids)
-    
+
             curr_ids, sum_logprobs = searcher.search(
                     input_ids,
                     None,
@@ -2686,3 +2686,23 @@ class BertImgForGroundedPreTraining(BertImgForPreTraining):
 
         return outputs
 
+class FlowCalV2TypedLMHook(nn.Module):
+    """Opt-in typed residual hook used by ACPR FlowCal V2 before an LM head."""
+
+    def __init__(self, hidden_size, num_types=8):
+        super().__init__()
+        self.type_embedding = nn.Embedding(num_types, hidden_size)
+        self.gate = nn.Linear(hidden_size * 2, hidden_size)
+
+    def forward(self, hidden_states, type_ids):
+        type_vec = self.type_embedding(type_ids.clamp_min(0))
+        if type_vec.ndim == 2:
+            type_vec = type_vec.unsqueeze(1).expand_as(hidden_states)
+        gate = torch.sigmoid(self.gate(torch.cat([hidden_states, type_vec], dim=-1)))
+        return hidden_states + gate * type_vec
+
+
+def flowcal_v2_generation_logprobs(prediction_scores, token_ids):
+    """Gather generation log-probabilities for SCST-style V2 training."""
+    log_probs = F.log_softmax(prediction_scores, dim=-1)
+    return log_probs.gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)

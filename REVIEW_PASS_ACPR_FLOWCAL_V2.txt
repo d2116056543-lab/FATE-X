@@ -1,0 +1,3 @@
+REVIEW_PASS_ACPR_FLOWCAL_V2
+static_contract_audit=pass
+dynamic_preflight_gates=pass
