@@ -106,7 +106,8 @@ def train(config: str, output_dir: str, device: str = "cpu", batch_size: int | N
                 torch.save(ckpt, out_dir / "checkpoint_best_joint.pth")
         with (out_dir / "metrics_summary.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps({"epoch": epoch, "control_score": control_score, "text_score": text_score, "metrics": metrics}, ensure_ascii=False) + "\n")
-        print("ACPR_DYNFLOW_EVAL " + json.dumps({"epoch": epoch, "control_score": control_score, "text_score": text_score, "text_metrics_available": metrics.get("text_metrics_available"), "text_metrics_blocker": metrics.get("text_metrics_blocker")}, ensure_ascii=False), flush=True)
+        traffic_audit = metrics.get("traffic_flow_audit", {})
+        print("ACPR_DYNFLOW_EVAL " + json.dumps({"epoch": epoch, "control_score": control_score, "text_score": text_score, "text_metrics_available": metrics.get("text_metrics_available"), "text_metrics_blocker": metrics.get("text_metrics_blocker"), "traffic_flow_audit": traffic_audit}, ensure_ascii=False), flush=True)
         if max_steps > 0 and global_step >= max_steps:
             break
 
