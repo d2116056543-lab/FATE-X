@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -52,7 +53,31 @@ def _move_batch(batch, device: str):
     return batch
 
 
-def train(config: str, output_dir: str, device: str = "cpu", batch_size: int | None = None, epochs: int | None = None, max_steps: int = -1, max_train_samples: int = -1, max_eval_samples: int = 8, synthetic: bool = False) -> None:
+def _resolve_gradient_accumulation(cfg, batch_size: int, explicit: int | None) -> int:
+    if explicit is not None:
+        if int(explicit) < 1:
+            raise ValueError("gradient_accumulation_steps must be >= 1")
+        return int(explicit)
+    candidates = cfg.raw.get("memory_probe", {}).get("candidates", [])
+    for item in candidates:
+        if int(item.get("batch_size", -1)) == int(batch_size):
+            return max(1, int(item.get("gradient_accumulation_steps", 1)))
+    target = int(cfg.raw.get("memory_probe", {}).get("effective_batch_target", batch_size))
+    return max(1, math.ceil(target / max(1, int(batch_size))))
+
+
+def train(
+    config: str,
+    output_dir: str,
+    device: str = "cpu",
+    batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
+    epochs: int | None = None,
+    max_steps: int = -1,
+    max_train_samples: int = -1,
+    max_eval_samples: int = 8,
+    synthetic: bool = False,
+) -> None:
     cfg = load_dynflow_config(config)
     review_pass = _find_valid_review_pass(cfg)
     out_dir = Path(output_dir)
@@ -60,32 +85,77 @@ def train(config: str, output_dir: str, device: str = "cpu", batch_size: int | N
     (out_dir / "review_pass_used.txt").write_text(str(review_pass), encoding="utf-8")
     (out_dir / "config_resolved.json").write_text(json.dumps(cfg.raw, indent=2), encoding="utf-8")
     formal_epochs = int(cfg.get("optimization", "epochs", default=20)) if epochs is None else int(epochs)
-    bs = int(batch_size or 1)
+    first_candidate = cfg.raw.get("memory_probe", {}).get("candidates", [{}])[0]
+    bs = int(batch_size or first_candidate.get("batch_size") or 1)
+    accum_steps = _resolve_gradient_accumulation(cfg, bs, gradient_accumulation_steps)
     loader = build_dynflow_dataloader(cfg.raw, "train", batch_size=bs, max_samples=max_train_samples, synthetic=synthetic)
     model = ACPRDynFlowModel(cfg).to(device)
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4, weight_decay=0.01)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, formal_epochs * max(1, len(loader))))
+    optimizer_steps_per_epoch = max(1, math.ceil(max(1, len(loader)) / accum_steps))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, formal_epochs * optimizer_steps_per_epoch))
     best_text = -1.0
     best_control = float("inf")
     global_step = 0
+    optimizer_step = 0
+    (out_dir / "training_effective_batch.json").write_text(
+        json.dumps(
+            {
+                "batch_size": bs,
+                "gradient_accumulation_steps": accum_steps,
+                "effective_batch_size": bs * accum_steps,
+                "optimizer_steps_per_epoch": optimizer_steps_per_epoch,
+                "source": "cli_or_memory_probe_config",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     for epoch in range(formal_epochs):
         model.train()
+        opt.zero_grad(set_to_none=True)
         for batch_idx, batch in enumerate(loader):
             batch = _move_batch(batch, device)
-            opt.zero_grad(set_to_none=True)
             out = model(batch)
-            out.total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            scheduler.step()
+            scaled_loss = out.total_loss / accum_steps
+            scaled_loss.backward()
             global_step += 1
-            record = {"event": "ACPR_DYNFLOW_BATCH", "epoch": epoch, "batch": batch_idx, "global_step": global_step, "loss": float(out.total_loss.detach().cpu()), "sample_ids": batch.sample_ids[:2], "frames_shape": list(batch.frames.shape)}
+            is_last_batch = batch_idx == len(loader) - 1
+            reached_max_steps = max_steps > 0 and global_step >= max_steps
+            should_step = ((batch_idx + 1) % accum_steps == 0) or is_last_batch or reached_max_steps
+            if should_step:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
+                scheduler.step()
+                opt.zero_grad(set_to_none=True)
+                optimizer_step += 1
+            record = {
+                "event": "ACPR_DYNFLOW_BATCH",
+                "epoch": epoch,
+                "batch": batch_idx,
+                "global_step": global_step,
+                "optimizer_step": optimizer_step,
+                "gradient_accumulation_steps": accum_steps,
+                "optimizer_stepped": should_step,
+                "loss": float(out.total_loss.detach().cpu()),
+                "loss_scaled_for_backward": float(scaled_loss.detach().cpu()),
+                "sample_ids": batch.sample_ids[:2],
+                "frames_shape": list(batch.frames.shape),
+            }
             print("ACPR_DYNFLOW_BATCH " + json.dumps(record, ensure_ascii=False), flush=True)
             with (out_dir / "loss_components.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps({**record, "loss_components": {k: float(v.detach().cpu()) for k, v in out.loss_components.items()}}, ensure_ascii=False) + "\n")
-            if max_steps > 0 and global_step >= max_steps:
+            if reached_max_steps:
                 break
-        ckpt = {"model": model.state_dict(), "epoch": epoch, "global_step": global_step, "optimizer": opt.state_dict(), "scheduler": scheduler.state_dict()}
+        ckpt = {
+            "model": model.state_dict(),
+            "epoch": epoch,
+            "global_step": global_step,
+            "optimizer_step": optimizer_step,
+            "gradient_accumulation_steps": accum_steps,
+            "effective_batch_size": bs * accum_steps,
+            "optimizer": opt.state_dict(),
+            "scheduler": scheduler.state_dict(),
+        }
         tmp = out_dir / "checkpoint_latest.pth.tmp"
         torch.save(ckpt, tmp)
         tmp.replace(out_dir / "checkpoint_latest.pth")
@@ -118,6 +188,7 @@ def main() -> None:
     p.add_argument("--output_dir", required=True)
     p.add_argument("--device", default="cpu")
     p.add_argument("--batch_size", type=int)
+    p.add_argument("--gradient_accumulation_steps", type=int)
     p.add_argument("--epochs", type=int)
     p.add_argument("--max_steps", type=int, default=-1)
     p.add_argument("--max_train_samples", type=int, default=-1)
@@ -129,4 +200,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
