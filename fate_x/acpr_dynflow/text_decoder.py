@@ -84,6 +84,13 @@ class DynFlowTextDecoder(nn.Module):
             positions = positions.unsqueeze(0).expand(logits.shape[0], -1)
         if targets.dim() == 1:
             targets = targets.unsqueeze(0).expand(logits.shape[0], -1)
+        if positions.shape[1] != targets.shape[1]:
+            # ADAPT real batches can carry more masked token ids than decoded text
+            # positions. Only entries with both a target id and a decoded position
+            # are meaningful for this auxiliary LM loss.
+            common = min(positions.shape[1], targets.shape[1])
+            positions = positions[:, :common]
+            targets = targets[:, :common]
         valid = targets.ge(0) & positions.ge(start) & positions.lt(end) & positions.lt(logits.shape[1])
         if not bool(valid.any()):
             return logits.sum() * 0.0

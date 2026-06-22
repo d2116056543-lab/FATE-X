@@ -14,9 +14,11 @@ def test_text_decoder_accepts_adapt_masked_token_contract():
     dim = 256
     decoder = DynFlowTextDecoder(text_dim=32, factor_dim=dim, vocab_size=101)
     input_ids = torch.randint(0, 101, (batch, text_len))
-    masked_pos = torch.tensor([[0, 3, 14, 15, 20, 29] + [0] * 39, [2, 7, 12, 17, 22, 28] + [0] * 39])
+    # Real ADAPT/BDDX batches use text-length masked positions but may carry a
+    # longer masked-id tensor from the original BERT masking contract.
+    masked_pos = torch.tensor([[0, 3, 14, 15, 20, 29] + [0] * 24, [2, 7, 12, 17, 22, 28] + [0] * 24])
     masked_ids = torch.randint(0, 101, (batch, 45))
-    masked_ids[:, 6:] = -1
+    masked_ids[:, 30:] = -1
     flow = TrafficFlowState(
         factor_names=tuple(f"factor_{i}" for i in range(factors)),
         factor_tokens=torch.randn(batch, steps, factors, dim),
@@ -47,4 +49,3 @@ def test_text_decoder_accepts_adapt_masked_token_contract():
     assert out.explanation_logits.shape[:2] == (batch, text_len)
     assert torch.isfinite(out.action_loss)
     assert torch.isfinite(out.explanation_loss)
-
