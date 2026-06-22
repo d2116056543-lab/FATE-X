@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 import torch
@@ -11,6 +12,37 @@ from fate_x.acpr_dynflow.model import ACPRDynFlowModel
 from fate_x.engine.acpr_dynflow_data import build_dynflow_dataloader
 from fate_x.engine.eval_acpr_dynflow import evaluate
 
+
+
+
+def _current_git_head() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.STDOUT).strip()
+    except Exception:
+        return ""
+
+
+def _find_valid_review_pass(cfg) -> Path:
+    head = _current_git_head()
+    roots = []
+    preflight_dir = cfg.raw.get("paths", {}).get("preflight_dir") or cfg.raw.get("preflight", {}).get("preflight_dir")
+    if preflight_dir:
+        roots.append(Path(preflight_dir))
+    roots.extend(sorted(Path(".background_runs").glob("acpr_dynflow_v1_final_preflight*"), reverse=True))
+    for root in roots:
+        review = root / "review_report.json"
+        pass_file = root / "REVIEW_PASS_ACPR_DYNFLOW_V1.txt"
+        git_file = root / "git_provenance.json"
+        if not (review.exists() and pass_file.exists() and git_file.exists()):
+            continue
+        try:
+            report = json.loads(review.read_text(encoding="utf-8"))
+            git = json.loads(git_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if report.get("passed") is True and not report.get("blockers") and git.get("head") == head and git.get("github_head") == head:
+            return pass_file
+    raise RuntimeError("ACPR-DynFlow formal training requires a clean REVIEW_PASS for the current GitHub-synced HEAD")
 
 def _move_batch(batch, device: str):
     for name in ("frames", "input_ids", "attention_mask", "token_type_ids", "masked_pos", "masked_ids", "control_target"):
@@ -22,8 +54,10 @@ def _move_batch(batch, device: str):
 
 def train(config: str, output_dir: str, device: str = "cpu", batch_size: int | None = None, epochs: int | None = None, max_steps: int = -1, max_train_samples: int = -1, max_eval_samples: int = 8, synthetic: bool = False) -> None:
     cfg = load_dynflow_config(config)
+    review_pass = _find_valid_review_pass(cfg)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "review_pass_used.txt").write_text(str(review_pass), encoding="utf-8")
     (out_dir / "config_resolved.json").write_text(json.dumps(cfg.raw, indent=2), encoding="utf-8")
     formal_epochs = int(cfg.get("optimization", "epochs", default=20)) if epochs is None else int(epochs)
     bs = int(batch_size or 1)
@@ -60,17 +94,19 @@ def train(config: str, output_dir: str, device: str = "cpu", batch_size: int | N
         speed_rmse = metrics.get("signals", {}).get("speed", {}).get("rmse")
         course_rmse = metrics.get("signals", {}).get("course", {}).get("rmse")
         control_score = float("inf") if speed_rmse is None or course_rmse is None else float(speed_rmse) + float(course_rmse)
-        text_score = 0.0
-        if text_score > best_text:
-            best_text = text_score
+        text_score = metrics.get("CIDEr_des+exp") if metrics.get("text_metrics_available") else None
+        if text_score is not None and float(text_score) > best_text:
+            best_text = float(text_score)
             torch.save(ckpt, out_dir / "checkpoint_best_text.pth")
         if control_score < best_control:
             best_control = control_score
             torch.save(ckpt, out_dir / "checkpoint_best_control.pth")
             torch.save(ckpt, out_dir / "checkpoint_best_test.pth")
-            torch.save(ckpt, out_dir / "checkpoint_best_joint.pth")
+            if text_score is not None:
+                torch.save(ckpt, out_dir / "checkpoint_best_joint.pth")
         with (out_dir / "metrics_summary.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"epoch": epoch, "control_score": control_score, "metrics": metrics}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"epoch": epoch, "control_score": control_score, "text_score": text_score, "metrics": metrics}, ensure_ascii=False) + "\n")
+        print("ACPR_DYNFLOW_EVAL " + json.dumps({"epoch": epoch, "control_score": control_score, "text_score": text_score, "text_metrics_available": metrics.get("text_metrics_available"), "text_metrics_blocker": metrics.get("text_metrics_blocker")}, ensure_ascii=False), flush=True)
         if max_steps > 0 and global_step >= max_steps:
             break
 

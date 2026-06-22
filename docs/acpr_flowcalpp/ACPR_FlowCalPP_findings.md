@@ -445,3 +445,49 @@ Do not continue this training run. Before another full run:
 - Gradient proof: `gate_gradient_chain.passed=true`, `missing_components=[]`, `frozen_params_with_grad=[]`, `missing_trainable_grad_params=0`.
 - Git proof: local HEAD equals GitHub `acpr_dynflow_v1` HEAD at `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
 - Note: This md append changes HEAD, so final authorization must be rerun after this documentation commit.
+
+---
+
+## Unified Findings Expansion - 2026-06-23 05:09:06 +08:00
+
+### A. ADAPT reproduction is the local reference, not just the paper table
+- The ADAPT paper numbers are useful context, but the most relevant baseline for ACPR-family modules is the user's local ADAPT reproduction on the same downloaded/preprocessed BDD-X data.
+- Existing records indicate the local ADAPT reproduction reached approximately CIDEr_des+exp=3.16 by epoch 4 and around 3.30 by epoch 12, while the later ACPR FlowCal V2 continuation stayed near 2.05-2.08.
+- Therefore the key comparison is not “does V2 look plausible,” but “does V2 improve over the exact checkpoint it resumed from.” That condition was not met.
+
+### B. The main V2 failure was not just training length
+- V2 text quality was already far below the known local reproduction baseline early in the run.
+- Control-course metrics showed a scale-level issue: recorded course RMSE around 88.95 versus ADAPT reproduction around 6.12 is too large to explain as ordinary model undertraining.
+- The likely failure class is resume/eval/data bridge mismatch, control target scaling mismatch, or hidden-state perturbation from inserted modules, not just insufficient epochs.
+- Future staged training must first run a pure eval of the intended resume checkpoint through the new code path; if that pure eval does not reproduce baseline metrics, training should not start.
+
+### C. Discrete action proxy evaluation was the wrong main control metric for BDD-X/ADAPT
+- BDD-X/ADAPT control is continuous speed/course prediction. Forcing speed/course into maintain/stop/straight/turn proxy recalls was not aligned with the ADAPT task contract.
+- Those proxy metrics were removed from the main interpretation. If retained later, they should be marked diagnostic-only and never used for best checkpoint selection.
+- Correct control selection should use legal continuous metrics such as speed/course RMSE or threshold accuracies (A0.5, A1, etc.) when available.
+
+### D. Traffic-flow audit became informative but was not enough
+- The audit began to expose macro/mesoscopic traffic-flow factors and their relation to labels.
+- A key earlier gap was that model-prediction correlations (pred_speed_delta_corr, pred_course_delta_corr) were null; this meant the audit could show label association but not that the model used flow factors for predictions.
+- After audit patching, prediction correlations became non-null, but the values and low prediction-delta variance did not prove a useful causal flow-control mechanism.
+- The next design should require intervention/ablation evidence, not only correlation.
+
+### E. DynFlow V1 resolved several real implementation blockers
+- The OIA predicate initializer now loads a real ACPR-CalAlign checkpoint containing model/predicate_head.predicate_queries rather than unresolved placeholders.
+- The official/available OIA checkpoint has source dimension 384; DynFlow uses a mapper into the model dimension and records SHA/source metadata.
+- Video Swin changed from a lightweight placeholder to actual 	orchvision.models.video.swin3d_b with official Kinetics-600 weights converted into torchvision keyspace.
+- BERT changed from a lightweight text path to local ert-base-uncased, with bottom layers frozen and top layers trainable.
+- The gradient audit initially exposed real dead trainable paths. These were fixed by wiring lane-flow tokens into the reasoner, lateral bias into course contribution, and visual text tokens into the text decoder.
+
+### F. DynFlow V1 review-pass caveat
+- A clean review pass existed at an earlier commit, but later inspection found the trainer/evaluator still had a text-evaluation honesty gap.
+- Specifically, 	rain_acpr_dynflow.py used a fake 	ext_score = 0.0, and eval_acpr_dynflow.py did not generate ADAPT-style caption metrics from model outputs.
+- This means any “best text” checkpoint selected before the fix was not scientifically valid.
+- The latest patch replaces fake text-score logic with real text-metric availability checks and blocks/suppresses best-text updates when generated text metrics are not available.
+- Because that patch changes code after the prior review pass, the pass must be regenerated after commit.
+
+### G. Repeated failure pattern to avoid
+- Starting a new complex stage before the previous evaluation bridge is proven stable caused multiple wasted runs.
+- Adding traffic-flow modules before proving baseline checkpoint metric preservation made it hard to distinguish module failure from resume/eval mismatch.
+- Using paper numbers without checking local reproduction history led to misleading interpretations.
+- Future work must follow this order: pure checkpoint eval -> smoke train/eval -> short staged run -> only then full training.

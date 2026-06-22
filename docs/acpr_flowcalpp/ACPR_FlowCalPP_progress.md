@@ -598,3 +598,68 @@ Generated: 2026-06-23 00:12:56
 - Gradient proof: `gate_gradient_chain.passed=true`, `missing_components=[]`, `frozen_params_with_grad=[]`, `missing_trainable_grad_params=0`.
 - Git proof: local HEAD equals GitHub `acpr_dynflow_v1` HEAD at `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
 - Note: This md append changes HEAD, so final authorization must be rerun after this documentation commit.
+
+---
+
+## Unified Progress Expansion - 2026-06-23 05:09:06 +08:00
+
+### 1. ADAPT and BDD-X foundation
+- Verified that the BDD-X preprocessed package is the practical data base for ADAPT-style reproduction.
+- Established that datasets and datasets_part have different roles in the local ADAPT setup; future comparisons must preserve the actual reference data path rather than substituting a different split silently.
+- Recorded that local ADAPT reproduction is the immediate benchmark for ACPR modules; paper numbers are secondary unless exact protocol parity is proven.
+
+### 2. FlowTrace / FlowCalPP / V1 engineering lessons
+- Added real epoch-end evaluation and best-checkpoint logic after discovering that naming a checkpoint est_test is not sufficient unless driven by actual test metrics.
+- Added resume state handling and monitoring artifacts so SSH disconnects do not destroy the run state.
+- Fixed smoke/step-limit behavior in earlier FlowTrace work after discovering that a nominal max-step argument did not cap the real ADAPT loop.
+- Lesson retained: for any future package, a smoke must prove the actual train loop stops/evaluates where intended, not merely that arguments are parsed.
+
+### 3. ACPR FlowCal V2 run outcome
+- V2 was intended to continue from a stronger prior checkpoint and verify that added flow/control modules improve the previous result.
+- Observed result did not improve over the local ADAPT reproduction baseline. Recorded text metrics stayed around CIDEr_des+exp=2.05-2.08, below the earlier reproduction history.
+- Control/course metrics were not normal; the course RMSE scale mismatch required stopping rather than continuing.
+- Decision made: do not keep training V2 until the resume checkpoint can be evaluated through the V2 bridge and reproduce the pre-V2 baseline.
+
+### 4. DynFlow V1 package implementation chronology
+- Created branch/worktree cpr_dynflow_v1 under E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree.
+- Implemented package namespace ate_x/acpr_dynflow and engine entrypoints for training, evaluation, preflight, audit, visualization, and supervision.
+- Added direct-image data path with formal frame shape [B,32,3,224,224].
+- Replaced placeholder visual/text paths with real Video Swin Kinetics and local BERT-base loaders.
+- Located real OIA/CalAlign predicate checkpoint and wired predicate_head.predicate_queries into the initializer.
+- Fixed gradient-chain implementation so intended modules receive gradients and frozen components remain frozen.
+- Ran verification before the earlier commit chain: compileall, pytest tests/acpr_dynflow -q, git diff --check, synthetic preflight, formal audit, and review-pass generation.
+
+### 5. Commits recorded before latest patch
+- 9f8c122 Resolve ACPR DynFlow OIA and gradient gates.
+- 8d4b7ca Record ACPR DynFlow final review pass.
+- These commits were pushed to GitHub branch cpr_dynflow_v1 before the later train/eval honesty patch.
+
+### 6. Latest discovered gap after the earlier review pass
+- Inspection found that 	rain_acpr_dynflow.py still selected best-text checkpoints from a fake placeholder score.
+- Inspection found that eval_acpr_dynflow.py did not yet emit real generated-caption ADAPT-style metrics.
+- Patched files currently modified in the worktree:
+  - ate_x/engine/eval_acpr_dynflow.py
+  - ate_x/engine/train_acpr_dynflow.py
+- Patch intent:
+  - generate model caption rows during evaluation;
+  - call the ADAPT-style caption evaluation bridge when real data is available;
+  - write blockers when text metrics are unavailable;
+  - prevent checkpoint_best_text.pth and joint checkpoint updates from fake text scores;
+  - require a valid review pass tied to current Git HEAD before formal training.
+
+### 7. Current not-yet-finished state
+- The previous review pass is stale because code changed after it.
+- The two train/eval files and this documentation expansion must be committed and pushed.
+- After that, final dynamic preflight and formal audit must be rerun on the new clean HEAD.
+- If the new preflight/audit fails, do not start formal training; record the blocker and fix it.
+
+### 8. Next exact verification sequence
+1. Commit code and documentation changes.
+2. Push cpr_dynflow_v1 to d2116056543-lab/FATE-X.
+3. Run python -m compileall -q fate_x tests/acpr_dynflow.
+4. Run python -m pytest tests/acpr_dynflow -q.
+5. Run git diff --check.
+6. Run python -m fate_x.engine.run_acpr_dynflow_preflight --config configs/acpr_dynflow_v1_bddx_32f_224.yaml --output_dir <new_final_preflight_dir> --device cuda --synthetic.
+7. Run python -m fate_x.engine.audit_acpr_dynflow --repo_root . --config configs/acpr_dynflow_v1_bddx_32f_224.yaml --output_dir <new_final_preflight_dir> --write_review_pass.
+8. Confirm local HEAD, GitHub HEAD, and review-pass provenance all match.
+9. Only after these checks, run formal training or a bounded real-data train/eval smoke.

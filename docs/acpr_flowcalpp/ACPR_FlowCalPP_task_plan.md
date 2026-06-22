@@ -531,3 +531,48 @@ M .gitignore
 - Gradient proof: `gate_gradient_chain.passed=true`, `missing_components=[]`, `frozen_params_with_grad=[]`, `missing_trainable_grad_params=0`.
 - Git proof: local HEAD equals GitHub `acpr_dynflow_v1` HEAD at `9f8c122b2ad36f704591c4f7c0a7796cb4ac825d`.
 - Note: This md append changes HEAD, so final authorization must be rerun after this documentation commit.
+
+---
+
+## Unified ACPR/ADAPT Timeline Expansion - 2026-06-23 05:09:06 +08:00
+
+### Why this expansion exists
+The previous three-record set was too compressed for the amount of work done across ADAPT reproduction, FlowTrace/FlowCalPP, V2, and DynFlow. This section turns the records into the durable source of truth for future runs: what was tried, which metrics moved, which implementation details were corrected, and which mistakes must not be repeated.
+
+### Scope covered by this unified record
+- ADAPT reproduction on BDD-X preprocessed 32-frame TSV data.
+- FlowTrace PMT V1 and ACPR FlowCalPP V1/V2 experiments layered on top of the ADAPT-style data path.
+- DynFlow V1 strict implementation package under ate_x/acpr_dynflow.
+- Training/evaluation contract decisions: ADAPT-style caption metrics, continuous control metrics, checkpoint selection, and forbidden discrete proxy evaluation.
+- Git synchronization and review-pass rules for d2116056543-lab/FATE-X branches.
+
+### Chronological task map
+| Phase | Main branch/worktree | Intended goal | Actual status | Durable lesson |
+|---|---|---|---|---|
+| ADAPT reproduction | E:/sbw/ADAPT_repro/ADAPT | Establish a BDD-X reference run with paper-style caption/control metrics. | Usable baseline. Earlier reproduction reached much stronger text metrics than later ACPR V2 attempts. | Do not compare a new module to paper numbers before first comparing it against this local reproduction checkpoint/history. |
+| FlowTrace PMT V1 | ate_x_flowtrace_pmt_v1_worktree | Add traffic-flow/PMT mechanism while preserving ADAPT training semantics. | Required hard smoke limit fixes and strict doc package. | --max_steps alone was not a true training-loop cap; hard-stop plumbing must be verified from log lines. |
+| ACPR FlowCalPP V1 | FATE-X ACPR worktree family | Add traffic-flow-aware control/text outputs and ADAPT-aligned evaluation. | Added epoch-end eval/resume/best checkpoint logic. | Any ADAPT-aligned trainer must evaluate test split every epoch and update checkpoint from real metrics, not a placeholder. |
+| ACPR FlowCal V2 | cpr_flowcal_v2 path | Continue from a strong previous checkpoint and prove new modules improve it. | Failed to beat the previous ADAPT/ACPR baseline. Text stayed around CIDEr_des+exp=2.05-2.08; local ADAPT reproduction had stronger values. | New module schedules are not useful if resume/eval bridge cannot reproduce the starting checkpoint before training. |
+| DynFlow V1 package | E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree, branch cpr_dynflow_v1 | Implement a stricter direct-image ACPR-DynFlow path with Video Swin, BERT, OIA predicates, gradient-chain audit, and preflight gates. | Code implemented and preflight passed once at commit 8d4b7ca, but a later train/eval honesty patch is currently uncommitted and invalidates the previous review pass until re-run. | Review pass is tied to a Git SHA; any code or doc commit after a pass requires another final audit/pass. |
+
+### Current DynFlow V1 implementation contract
+- Formal input must remain direct BDD-X frames [B,32,3,224,224]; no cached ADAPT features/logits as formal input.
+- Allowed initializers are generic BERT-base, Kinetics Video Swin, and the BDD-OIA ACPR-CalAlign predicate-query checkpoint.
+- ate_x.engine.train_acpr_dynflow and ate_x.engine.eval_acpr_dynflow are the official trainer/evaluator.
+- Preflight and audit reports must pass before formal training; review pass must be regenerated after the latest commit.
+- Training must not silently use fake text scores or save checkpoint_best_text.pth from a placeholder.
+
+### Current action checklist
+- [x] Preserve one unified set of three records instead of creating new scattered MD files.
+- [x] Record V2 failure against local ADAPT reproduction, not only against paper numbers.
+- [x] Record OIA checkpoint resolution and gradient-chain root causes.
+- [x] Record that eval_acpr_dynflow.py / 	rain_acpr_dynflow.py had a fake/absent text-eval gap after the earlier review pass.
+- [ ] Commit the latest train/eval honesty patch plus this record expansion.
+- [ ] Re-run DynFlow preflight and audit on the new HEAD before claiming formal review-pass validity.
+- [ ] Only start formal training after the new review pass confirms current HEAD and text/control eval paths are valid.
+
+### Hard stop conditions for future runs
+- If a run cannot reproduce the selected starting checkpoint metrics through the new eval bridge, do not continue staged training.
+- If control metrics are scale-broken, e.g. course RMSE jumps from single digits to around 89, fix the eval/data bridge before training.
+- If generated-text metrics are unavailable, do not save a best-text checkpoint.
+- If a new review pass was generated before a later commit, treat it as stale.
