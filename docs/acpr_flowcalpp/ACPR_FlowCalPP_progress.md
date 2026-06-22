@@ -558,3 +558,19 @@ Generated: 2026-06-23 00:12:56
 4. Replace `oia_acpr_checkpoint: UNRESOLVED_REQUIRED_FATE_OIA_ACPR_CALALIGN_V1_2_QUERY_CHECKPOINT` in `configs/acpr_dynflow_v1_bddx_32f_224.yaml`.
 5. Run formal preflight again and require `passed=true` plus `REVIEW_PASS_ACPR_DYNFLOW_V1.txt`.
 6. Only then start formal BDD-X training under the foreground supervisor.
+
+## ACPR-DynFlow V1 real-loader progress (2026-06-23 04:16 China time)
+
+1. Confirmed `torchvision` and `transformers` are installed in `sbw39`.
+2. Downloaded official Kinetics-600 Video Swin checkpoint to the configured plan path.
+3. Downloaded Hugging Face `bert-base-uncased` to the configured plan path.
+4. Inspected official Video Swin checkpoint structure and confirmed it contains `353` state-dict keys under `backbone.*`.
+5. Compared against torchvision `swin3d_b` and confirmed tensor count/shape compatibility despite key naming mismatch.
+6. Replaced lightweight `ACPRDynFlowVideoBackbone` with actual `swin3d_b` feature extraction and deterministic official-to-torchvision key conversion.
+7. Replaced lightweight text decoder path with BERT-base top-4 trainable decoder path.
+8. Patched `model.py` to pass `paths.bert_dir` into `DynFlowTextDecoder`.
+9. Patched preflight/audit so formal review fails if Swin/BERT are missing or not actually loaded.
+10. Fixed BERT protobuf import issue with local environment variable `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python`.
+11. Ran CUDA synthetic smoke and real-loader preflight; `bert_not_loaded` disappeared.
+12. Ran full tests after the real-loader changes: `48 passed, 102 warnings in 295.85s`.
+13. Next step is commit/push this hardening, then rerun preflight from a clean worktree. Expected blocker after commit: only `oia_checkpoint_unresolved`.

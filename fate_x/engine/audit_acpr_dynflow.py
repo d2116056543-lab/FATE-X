@@ -78,16 +78,32 @@ def build_static_reports(repo: Path, config_path: Path, out: Path) -> dict:
         hits[str(file.relative_to(repo))] = [name for name in forbidden if name in text]
     (out / "formal_import_graph.json").write_text(json.dumps({"forbidden_hits": hits, "passed": all(not v for v in hits.values())}, indent=2), encoding="utf-8")
     paths = cfg.raw.get("paths", {})
+    video_swin_path = Path(str(paths.get("video_swin_kinetics_checkpoint", "")))
+    bert_path = Path(str(paths.get("bert_dir", "")))
     model_independence = {
         "adapt_task_checkpoint_loaded_by_formal_training": False,
         "forbidden_formal_paths": [k for k, v in paths.items() if "adapt" in k.lower() and "reference" not in k.lower()],
         "oia_checkpoint": paths.get("oia_acpr_checkpoint"),
         "oia_checkpoint_exists": bool(paths.get("oia_acpr_checkpoint")) and Path(str(paths.get("oia_acpr_checkpoint"))).exists(),
+        "video_swin_kinetics_checkpoint": str(video_swin_path),
+        "video_swin_kinetics_checkpoint_exists": video_swin_path.exists(),
+        "bert_dir": str(bert_path),
+        "bert_dir_exists": bert_path.exists(),
+        "bert_config_exists": (bert_path / "config.json").exists(),
+        "bert_weight_exists": (bert_path / "model.safetensors").exists() or (bert_path / "pytorch_model.bin").exists(),
     }
     (out / "model_independence_audit.json").write_text(json.dumps(model_independence, indent=2), encoding="utf-8")
     (out / "config_binding_report.json").write_text(json.dumps({"field_count": len(cfg.consumer_manifest), "manifest": cfg.consumer_manifest}, indent=2), encoding="utf-8")
     (out / "implementation_manifest.json").write_text(json.dumps({"package": "ACPR-DynFlow V1", "formal_namespace": "fate_x/acpr_dynflow", "predicate_count": len(EXACT_32_PREDICATES), "config_sha256": _sha(config_path)}, indent=2), encoding="utf-8")
-    return {"branch": branch, "head": head, "remote": remote, "clean": status == "", "oia_resolved": model_independence["oia_checkpoint_exists"]}
+    return {
+        "branch": branch,
+        "head": head,
+        "remote": remote,
+        "clean": status == "",
+        "oia_resolved": model_independence["oia_checkpoint_exists"],
+        "video_swin_checkpoint_exists": model_independence["video_swin_kinetics_checkpoint_exists"],
+        "bert_ready": model_independence["bert_dir_exists"] and model_independence["bert_config_exists"] and model_independence["bert_weight_exists"],
+    }
 
 
 def maybe_write_pass(repo: Path, out: Path, state: dict, write_review_pass: bool) -> dict:
@@ -101,6 +117,14 @@ def maybe_write_pass(repo: Path, out: Path, state: dict, write_review_pass: bool
         blockers.append("dirty_worktree")
     if not state["oia_resolved"]:
         blockers.append("oia_checkpoint_unresolved")
+    if state.get("video_swin_checkpoint_exists") is False:
+        blockers.append("video_swin_checkpoint_missing")
+    if state.get("bert_ready") is False:
+        blockers.append("bert_base_missing")
+    if state.get("swin_loaded") is False:
+        blockers.append("video_swin_not_loaded")
+    if state.get("bert_loaded") is False:
+        blockers.append("bert_not_loaded")
     if missing:
         blockers.append("missing_required_reports")
     report = {"passed": not blockers, "blockers": blockers, "missing_reports": missing, "predicate_names": list(EXACT_32_PREDICATES)}

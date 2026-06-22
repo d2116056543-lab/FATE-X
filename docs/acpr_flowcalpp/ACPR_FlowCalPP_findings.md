@@ -374,3 +374,33 @@ Do not continue this training run. Before another full run:
 ### Root cause of remaining formal block
 - This is not a syntax/training-loop blocker. The remaining scientific blocker is missing required external artifact: the formal BDD-OIA ACPR-CalAlign predicate-query checkpoint.
 - Because the plan forbids substituting unrelated checkpoints, formal training must remain blocked until that artifact is provided or the plan is explicitly revised.
+
+## ACPR-DynFlow V1 real-loader findings (2026-06-23 04:16 China time)
+
+### Assets resolved
+- Video Swin K600 checkpoint downloaded from the official SwinTransformer release URL:
+  `https://github.com/SwinTransformer/storage/releases/download/v1.0.4/swin_base_patch244_window877_kinetics600_22k.pth`
+- Local checkpoint size after download: `382,579,368` bytes.
+- BERT-base downloaded from Hugging Face repo `bert-base-uncased` into `models/captioning/bert-base-uncased`.
+- BERT directory now contains config/vocab and a model weight file.
+
+### Root-cause fixes
+- Video Swin was previously only path-recorded. It now uses actual `swin3d_b` forward.
+- The official Video Swin checkpoint did not share exact key names with torchvision, but tensor shapes matched. A deterministic converter maps the official checkpoint to torchvision.
+- BERT initially failed with protobuf descriptor errors. The fix sets `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` immediately before importing `transformers.BertModel`; this avoids downgrading global packages in `sbw39`.
+
+### New verification evidence
+- `run_acpr_dynflow_preflight --device cuda --synthetic` after loader hardening removed `bert_not_loaded`.
+- `backbone_audit.json` reported:
+  - `kinetics_loaded=true`
+  - `uses_torchvision_swin=true`
+  - `converted_keys=351`
+  - `converted_ratio=0.9943342776`
+  - only skipped keys: `cls_head.fc_cls.weight`, `cls_head.fc_cls.bias`
+- Full tests after the real-loader change:
+  - `python -m compileall -q fate_x tests/acpr_dynflow`
+  - `python -m pytest tests/acpr_dynflow -q`
+  - Result: `48 passed, 102 warnings in 295.85s`
+
+### Remaining blocker
+- `oia_checkpoint_unresolved` remains. This is now the only substantive formal training blocker after commit, assuming the worktree is clean.

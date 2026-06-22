@@ -44,7 +44,7 @@ class ACPRDynFlowModel(nn.Module):
         self.lag = ResponseLagAligner(dim=state_dim)
         self.global_decision = GlobalDecisionStream(dim=state_dim, decision_dim=decision_dim)
         self.ledger_head = DecisionLedgerHead(dim=state_dim, signal_names=self.codec.signal_names)
-        self.text_decoder = DynFlowTextDecoder(text_dim=text_dim, factor_dim=state_dim)
+        self.text_decoder = DynFlowTextDecoder(text_dim=text_dim, factor_dim=state_dim, bert_dir=paths.get("bert_dir"))
         self.calalign = OnlineCalAlign(num_predicates=len(EXACT_32_PREDICATES))
 
     def forward(self, batch: DynFlowBatch, intervention: str | None = None) -> ACPRDynFlowOutput:

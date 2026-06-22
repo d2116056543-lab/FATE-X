@@ -490,3 +490,18 @@ M .gitignore
 - Synthetic smoke is allowed for code-path validation.
 - Formal BDD-X training is not allowed until the OIA ACPR-CalAlign predicate-query checkpoint is resolved and review pass is clean.
 - If the user wants to override this gate, record it explicitly as a protocol deviation; do not silently call it plan-compliant.
+
+## ACPR-DynFlow V1 real-loader hardening (2026-06-23 04:16 China time)
+
+### Why this was required
+- The first implementation had functional direct-image tensor flow, but `video_backbone.py` used a lightweight Conv/GRU fallback and `text_decoder.py` used a lightweight embedding path.
+- That was not sufficient for the plan clause requiring Kinetics Video Swin and generic BERT-base as the only formal initializers.
+
+### New implementation commitment
+- `fate_x/acpr_dynflow/video_backbone.py` now instantiates `torchvision.models.video.swin3d_b`.
+- The official Video Swin K600 checkpoint is downloaded to `models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth`.
+- The official checkpoint keyspace is converted deterministically from `backbone.layers.*` / `mlp.fc1/fc2` to torchvision `features.*` / `mlp.0/3`.
+- The loader converted `351/353` keys; the only skipped/missing tensors are the classifier head (`cls_head.fc_cls.*` vs torchvision `head.*`), which is expected because DynFlow uses feature states, not the pretrained classifier head.
+- `fate_x/acpr_dynflow/text_decoder.py` now loads local `models/captioning/bert-base-uncased` with `transformers.BertModel`, freezes embeddings and bottom 8 encoder layers, and trains the top 4 layers.
+- `fate_x/engine/run_acpr_dynflow_preflight.py` now writes `backbone_audit.json` and `text_decoder_audit.json` with explicit `kinetics_loaded`, `uses_torchvision_swin`, and `bert_loaded` fields.
+- `fate_x/engine/audit_acpr_dynflow.py` now blocks formal review if Video Swin or BERT assets are missing or fail to load.

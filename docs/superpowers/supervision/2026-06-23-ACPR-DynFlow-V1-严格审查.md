@@ -1,0 +1,55 @@
+# 双代理监督日志：ACPR-DynFlow V1 严格审查
+
+**日期：** 2026-06-23 04:16 China time
+**任务：** 根据用户提供的 ACPR-DynFlow V1 计划严格核验代码落地，不允许用 smoke 训练冒充完整实现。
+**状态：** 执行中 / 存在外部硬阻塞
+**主执行端：** 当前 Codex 主会话
+**监督端：** 未创建子代理；当前工具规则要求只有用户明确要求 subagent 时才能启动，因此本轮记录为主会话自审。
+
+## 1. 原始约束摘要
+
+- 必须严格对齐用户提供的 plan/config/checklist/manifest/skill。
+- 必须实现代码级功能，不能只写入口或假装调用。
+- 代码改完后必须反复审查 plan 与实现差异。
+- 全部功能覆盖后才允许按计划启动训练。
+- 训练过程中必须监督 epoch/batch/loss/test/control/text/checkpoint/交通流证据。
+
+## 2. 适用 Skill
+
+- `dual-agent-supervision`：用于要求严格覆盖和不遗漏。
+- `verification-before-completion`：用于所有完成声明前的命令证据。
+- `systematic-debugging`：用于 preflight/test 中发现的真实问题。
+
+## 3. 功能覆盖矩阵
+
+| 编号 | 用户/计划要求 | 状态 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 独立分支 `acpr_dynflow_v1` | 已实现 | GitHub branch 已推送 |
+| 2 | formal namespace `fate_x/acpr_dynflow` | 已实现 | 代码目录和测试存在 |
+| 3 | direct-image `[B,32,3,224,224]` | 已验证 | `ACPR_DYNFLOW_BATCH` 输出 frames_shape |
+| 4 | 禁止 ADAPT/FlowCal checkpoint 作为 formal initializer | 已检查 | `model_independence_audit.json` |
+| 5 | Kinetics Video Swin initializer | 已改进并验证 | `backbone_audit.json` 显示 `kinetics_loaded=true` |
+| 6 | BERT-base initializer | 已改进并验证 | `text_decoder_audit.json` 中 `bert_loaded=true` |
+| 7 | OIA ACPR-CalAlign predicate-query checkpoint | 阻塞 | 只找到 predicate yaml，未找到合法 checkpoint |
+| 8 | preflight gate A-L 和 review pass | 未通过 | `oia_checkpoint_unresolved` |
+| 9 | 正式训练 | 未启动 | 计划禁止 gate 未过时启动 |
+
+## 4. 用户计划保真矩阵
+
+| 编号 | 计划项 | 保留情况 | 偏离/阻塞 |
+| --- | --- | --- | --- |
+| 1 | 使用 Kinetics Video Swin | 已从轻量替代修正为真实 loader | 无 |
+| 2 | 使用 generic BERT-base | 已从轻量替代修正为真实 loader | 无 |
+| 3 | 使用 OIA predicate-query checkpoint | 未完成 | 外部 checkpoint 缺失 |
+| 4 | 通过 review pass 后训练 | 保留 | 未启动 formal training |
+| 5 | 前台监督正式训练 | 保留 | 等 gate 通过 |
+
+## 5. 审查结论
+
+当前不能报告完整完成。真实 Swin/BERT loader 已补齐并通过测试；唯一剩余 formal blocker 是 `oia_checkpoint_unresolved`。
+
+## 6. 验证证据
+
+- `python -m pytest tests/acpr_dynflow -q`：`48 passed, 102 warnings in 295.85s`
+- real-loader preflight：`dirty_worktree`, `oia_checkpoint_unresolved`；其中 `bert_not_loaded` 已修复。
+- 待提交后预期 dirty blocker 消失。

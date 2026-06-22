@@ -39,7 +39,26 @@ def main() -> None:
     output.total_loss.backward()
     grads = {n: float(p.grad.detach().abs().sum().cpu()) for n, p in model.named_parameters() if p.requires_grad and p.grad is not None}
     _write(out, "tensor_contracts.json", {"passed": True, "total_loss": float(output.total_loss.detach().cpu()), "frames": list(batch.frames.shape)})
-    _write(out, "backbone_audit.json", {"forward_count": output.backbone.forward_count, "kinetics_loaded": model.backbone.kinetics_loaded, "frozen_stage0": all(not p.requires_grad for p in model.backbone.stage0.parameters())})
+    if hasattr(model.backbone, "swin"):
+        frozen_early = all(not p.requires_grad for p in model.backbone.swin.patch_embed.parameters())
+        frozen_early = frozen_early and all(not p.requires_grad for idx in [0, 1, 2, 3] for p in model.backbone.swin.features[idx].parameters())
+    else:
+        frozen_early = all(not p.requires_grad for p in model.backbone.stage0.parameters()) and all(not p.requires_grad for p in model.backbone.stage1.parameters())
+    state["swin_loaded"] = bool(model.backbone.kinetics_loaded)
+    state["bert_loaded"] = bool(getattr(model.text_decoder, "bert_loaded", False))
+    _write(out, "backbone_audit.json", {
+        "forward_count": output.backbone.forward_count,
+        "kinetics_loaded": model.backbone.kinetics_loaded,
+        "uses_torchvision_swin": bool(getattr(model.backbone, "_uses_torchvision_swin", False)),
+        "kinetics_load_report": getattr(model.backbone, "kinetics_load_report", {}),
+        "frozen_early_stages": frozen_early,
+    })
+    _write(out, "text_decoder_audit.json", {
+        "bert_loaded": bool(getattr(model.text_decoder, "bert_loaded", False)),
+        "bert_dir": getattr(model.text_decoder, "bert_dir", ""),
+        "bert_load_error": getattr(model.text_decoder, "bert_load_error", ""),
+        "vocab_size": int(getattr(model.text_decoder, "vocab_size", 0)),
+    })
     _write(out, "oia_predicate_transfer_audit.json", output.diagnostics["query_transfer"])
     _write(out, "dynamic_predicate_audit.json", {"shape": list(output.predicates.logits.shape), "names": list(output.predicates.names), "evidence_sum": float(output.predicates.evidence_maps.sum().detach().cpu())})
     _write(out, "decision_ledger_audit.json", {"normalized_exact": bool(torch.allclose(output.ledger.final_prediction_normalized, output.ledger.global_prediction_normalized + output.ledger.factor_contributions_normalized.sum(2), atol=1e-5)), "raw_exact": bool(torch.allclose(output.ledger.final_prediction_raw, output.ledger.global_prediction_raw + output.ledger.factor_contributions_raw.sum(2), atol=1e-5))})
