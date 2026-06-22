@@ -7,10 +7,11 @@ from fate_x.acpr_dynflow.model import ACPRDynFlowModel
 from fate_x.engine.acpr_dynflow_data import SyntheticDynFlowDataset, collate_dynflow
 
 
-def make_output():
+def make_output(length: int = 1):
     cfg = load_dynflow_config("configs/acpr_dynflow_v1_bddx_32f_224.yaml")
     model = ACPRDynFlowModel(cfg)
-    batch = collate_dynflow([SyntheticDynFlowDataset(length=1)[0]])
+    dataset = SyntheticDynFlowDataset(length=length)
+    batch = collate_dynflow([dataset[i] for i in range(length)])
     out = model(batch)
     return model, batch, out
 

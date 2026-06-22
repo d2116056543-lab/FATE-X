@@ -24,6 +24,47 @@ from .types import ACPRDynFlowOutput, DynFlowBatch
 from .video_backbone import ACPRDynFlowVideoBackbone
 
 
+def _match_factor_attention(text_attention: Tensor, ledger_attention: Tensor) -> Tensor:
+    if ledger_attention.dim() == 3:
+        if text_attention.dim() == 2:
+            matched = text_attention.unsqueeze(1).expand(-1, ledger_attention.shape[1], -1)
+        elif text_attention.dim() == 3:
+            matched = text_attention
+        else:
+            matched = text_attention.reshape(text_attention.shape[0], 1, -1).expand(-1, ledger_attention.shape[1], -1)
+        if matched.shape[1] != ledger_attention.shape[1]:
+            matched = F.interpolate(
+                matched.permute(0, 2, 1),
+                size=ledger_attention.shape[1],
+                mode="linear",
+                align_corners=False,
+            ).permute(0, 2, 1)
+        if matched.shape[-1] != ledger_attention.shape[-1]:
+            bsz, steps, factors = matched.shape
+            matched = F.interpolate(
+                matched.reshape(bsz * steps, 1, factors),
+                size=ledger_attention.shape[-1],
+                mode="linear",
+                align_corners=False,
+            ).reshape(bsz, steps, ledger_attention.shape[-1])
+    else:
+        if text_attention.dim() == 3:
+            matched = text_attention.mean(1)
+        elif text_attention.dim() == 2:
+            matched = text_attention
+        else:
+            matched = text_attention.reshape(text_attention.shape[0], -1)
+        if matched.shape[-1] != ledger_attention.shape[-1]:
+            matched = F.interpolate(
+                matched.unsqueeze(1),
+                size=ledger_attention.shape[-1],
+                mode="linear",
+                align_corners=False,
+            ).squeeze(1)
+    matched = matched.clamp_min(0.0)
+    return matched / matched.sum(-1, keepdim=True).clamp_min(1e-6)
+
+
 class ACPRDynFlowModel(nn.Module):
     def __init__(self, cfg: DynFlowConfig | dict[str, Any] | None = None, codec: BDDSignalCodec | None = None):
         super().__init__()
@@ -95,7 +136,9 @@ class ACPRDynFlowModel(nn.Module):
         losses["predicate_query_anchor"] = q.pow(2).mean() * 0.01
         losses["pattern_semantic"] = cov.pattern_probs.mean() * 0.0 + cov.pattern_logits.pow(2).mean() * 1e-4
         losses["traffic_grammar"] = flow.factor_probs.mean() * 1e-4
-        losses["contribution_alignment"] = (text.action_to_factor_attention.mean(1) - ledger.speed_factor_attention).abs().mean()
+        text_factor_attention = _match_factor_attention(text.action_to_factor_attention, ledger.speed_factor_attention)
+        ledger_factor_attention = 0.5 * (ledger.speed_factor_attention + ledger.course_factor_attention)
+        losses["contribution_alignment"] = (text_factor_attention - ledger_factor_attention).abs().mean()
         losses["temporal_consistency"] = pred.relative_centroid_motion.abs().mean()
         losses["contribution_sparsity"] = ledger.factor_contributions_normalized.abs().mean()
         losses["contribution_smoothness"] = (ledger.factor_contributions_normalized[:, 1:] - ledger.factor_contributions_normalized[:, :-1]).abs().mean()
