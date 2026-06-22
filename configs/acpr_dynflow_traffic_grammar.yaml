@@ -1,0 +1,28 @@
+factors:
+  clear_open_flow:
+    predicates: [road_clear, open_left_gap, open_right_gap]
+  stable_following:
+    predicates: [front_vehicle_far, vehicle_left, vehicle_right]
+  dense_following:
+    predicates: [front_vehicle_close, road_crowded]
+  queue_congestion:
+    predicates: [front_vehicle_close, obstacle_front, road_crowded]
+  traffic_signal:
+    predicates: [traffic_light_red, traffic_light_green, traffic_light_visible]
+  lead_vehicle_group:
+    predicates: [front_vehicle_close, front_vehicle_far, vehicle_left, vehicle_right]
+  merge_lane_constraint:
+    predicates: [merging_left_context, merging_right_context]
+  turn_intersection:
+    predicates: [left_turn_region, right_turn_region, intersection_region]
+  vulnerable_obstacle_conflict:
+    predicates: [pedestrian_front, cyclist_front, obstacle_front]
+  left_gap_opening:
+    predicates: [lane_left_available, open_left_gap, drivable_left]
+  right_gap_opening:
+    predicates: [lane_right_available, open_right_gap, drivable_right]
+  visibility_limited:
+    predicates: [low_front_visibility]
+  global_context:
+    predicates: [global_scene_context, crosswalk_region, traffic_sign_visible]
+

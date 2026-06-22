@@ -533,3 +533,28 @@ Generated: 2026-06-23 00:12:56
 3. Fix control scale or target mismatch before motion stage.
 4. Seed best-checkpoint selectors from historical metrics.
 5. Only resume staged V2 if the no-op V2 bridge reproduces ADAPT checkpoint 4/12 metrics.
+
+## ACPR-DynFlow V1 chronological progress (2026-06-23 03:45 China time)
+
+1. Read and installed the package files from `FATE_X_ACPR_DynFlow_V1_Codex_Package_20260622`.
+2. Audited the source `flowtrace_pmt_v1` worktree and moved untracked scratch files into a timestamped ignored snapshot instead of deleting them.
+3. Created target worktree `E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree` and branch `acpr_dynflow_v1`.
+4. Pushed branch `acpr_dynflow_v1` to `github=https://github.com/d2116056543-lab/FATE-X.git` at base commit `8a52f4e99e81406cd949afaadb16c7483cf5025d`.
+5. Generated the DynFlow namespace, config files, engine entrypoints, explain modules, scripts, and tests.
+6. Initial test failure: `MesoscopicLaneFlow` used 31 relative-motion frames against 32 occupancy frames.
+7. Fix: prepended a zero relative-motion row so `rel_motion` aligns with full 32-frame occupancy.
+8. Re-ran tests after the fix: `48 passed in 53.18s`.
+9. Ran preflight. First run had a self-audit bug where `review_report.json` was counted missing before it was written.
+10. Fixed `audit_acpr_dynflow.py` so `review_report.json` is not included in its own pre-write missing list.
+11. Re-ran preflight: `missing_reports=[]`; remaining blockers: `dirty_worktree`, `oia_checkpoint_unresolved`.
+12. Ran synthetic training smoke. It emitted `ACPR_DYNFLOW_BATCH` and verified direct image shape `[1, 32, 3, 224, 224]`.
+13. Fixed `eval_acpr_dynflow.py` to use `torch.load(..., weights_only=False)` explicitly and eliminate the warning observed during smoke evaluation.
+14. Re-ran compile/smoke after warning fix: batch output remained normal and no `torch.load` FutureWarning was observed.
+
+### Next exact steps
+1. Commit and push the current implementation branch after final `git diff --check`.
+2. Re-run preflight after commit; expected hard blocker should be only `oia_checkpoint_unresolved`.
+3. Obtain or build the required BDD-OIA ACPR-CalAlign predicate-query checkpoint.
+4. Replace `oia_acpr_checkpoint: UNRESOLVED_REQUIRED_FATE_OIA_ACPR_CALALIGN_V1_2_QUERY_CHECKPOINT` in `configs/acpr_dynflow_v1_bddx_32f_224.yaml`.
+5. Run formal preflight again and require `passed=true` plus `REVIEW_PASS_ACPR_DYNFLOW_V1.txt`.
+6. Only then start formal BDD-X training under the foreground supervisor.

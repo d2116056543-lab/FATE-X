@@ -461,3 +461,32 @@ M .gitignore
  src/modeling/load_sensor_pred_head.py              |   50 +-
  44 files changed, 5379 insertions(+), 5350 deletions(-)
 ```
+
+## ACPR-DynFlow V1 strict plan continuation (2026-06-23 03:45 China time)
+
+### Contract source
+- Package: `C:/Users/WLJTXY/Downloads/FATE_X_ACPR_DynFlow_V1_Codex_Package_20260622`.
+- Branch/worktree required by plan: `acpr_dynflow_v1` at `E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree`.
+- Base branch: `flowtrace_pmt_v1`, clean source HEAD `8a52f4e99e81406cd949afaadb16c7483cf5025d`.
+- Formal target namespace: `fate_x/acpr_dynflow`.
+
+### Non-negotiable plan gates
+- Direct-image BDD-X input must remain `[B, 32, 3, 224, 224]`; no cached ADAPT features, no cached logits, no token cache shortcut.
+- Formal training must be an independent model path. It must not resume ADAPT, FlowTrace, FlowCalPP, or V2 checkpoints.
+- Allowed initializers only: generic BERT base, Kinetics Video Swin, and the user's BDD-OIA ACPR-CalAlign predicate-query checkpoint.
+- The 32 predicate ontology must match `fate_oia_acpr_calalign_v1_2` exactly.
+- The official formal trainer must be `fate_x.engine.train_acpr_dynflow`; evaluator must be `fate_x.engine.eval_acpr_dynflow`.
+- Preflight reports A-L and `REVIEW_PASS_ACPR_DYNFLOW_V1.txt` are required before formal training.
+- Plan explicitly requires foreground-supervised formal training and forbids detached formal training before review pass.
+
+### Implemented code-level surface
+- Added config and runbook artifacts: `configs/acpr_dynflow_v1_bddx_32f_224.yaml`, `configs/acpr_dynflow_predicates.yaml`, `configs/acpr_dynflow_text_rules.yaml`, `configs/acpr_dynflow_traffic_grammar.yaml`, `docs/runbooks/ACPR_DynFlow_V1_Implementation_Plan.md`, `docs/runbooks/ACPR_DynFlow_V1_Implementation_Manifest.json`, `docs/runbooks/ACPR_DynFlow_V1_File_Level_Checklist.md`, `.codex/skills/acpr-dynflow-implementation-audit/SKILL.md`.
+- Added `fate_x/acpr_dynflow` modules for signal codec, predicate ontology/transfer, ego motion, dynamic predicate field, NNPU/CalAlign, homogenizer, pattern router, lane flow, traffic state reasoner, response lag, global decision stream, decision ledger, contribution alignment, text decoder, interventions, and integrated model.
+- Added official engine entrypoints: `fate_x.engine.train_acpr_dynflow`, `fate_x.engine.eval_acpr_dynflow`, `fate_x.engine.run_acpr_dynflow_preflight`, `fate_x.engine.audit_acpr_dynflow`, `fate_x.engine.probe_acpr_dynflow_memory`, `fate_x.engine.export_acpr_dynflow_visuals`, `fate_x.engine.build_acpr_dynflow_atlas`, `fate_x.engine.supervise_acpr_dynflow_foreground`.
+- Added formal explanation/visualization support in `fate_x/explain/acpr_dynflow_*`.
+- Added `tests/acpr_dynflow` coverage for model shapes, loss, data, preflight artifacts, intervention hooks, factor identity, and engine entrypoints.
+
+### Current execution policy
+- Synthetic smoke is allowed for code-path validation.
+- Formal BDD-X training is not allowed until the OIA ACPR-CalAlign predicate-query checkpoint is resolved and review pass is clean.
+- If the user wants to override this gate, record it explicitly as a protocol deviation; do not silently call it plan-compliant.

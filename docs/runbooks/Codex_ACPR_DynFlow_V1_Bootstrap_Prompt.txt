@@ -1,0 +1,77 @@
+You are Codex implementing ACPR-DynFlow V1 for BDD-X.
+
+Source:
+  E:\sbw\FATE_Drive\fate_x_flowtrace_pmt_v1_worktree
+  branch flowtrace_pmt_v1
+
+Required new worktree:
+  E:\sbw\FATE_Drive\fate_x_acpr_dynflow_v1_worktree
+
+Required new branch:
+  acpr_dynflow_v1
+
+Do not modify the source worktree after creating the new worktree.
+
+Read first:
+
+1. E:\sbw\FATE_Drive\task_plan.md
+2. E:\sbw\FATE_Drive\findings.md
+3. E:\sbw\FATE_Drive\progress.md
+4. source worktree docs/acpr_flowcalpp/ACPR_FlowCalPP_task_plan.md
+5. source worktree docs/acpr_flowcalpp/ACPR_FlowCalPP_findings.md
+6. source worktree docs/acpr_flowcalpp/ACPR_FlowCalPP_progress.md
+7. Codex_ACPR_DynFlow_V1_Implementation_Plan.md
+8. acpr-dynflow-implementation-audit_SKILL.md
+9. acpr_dynflow_v1_bddx_32f_224.yaml
+
+Use installed Superpowers skills:
+
+- using-git-worktrees
+- brainstorming
+- writing-plans
+- test-driven-development
+- systematic-debugging
+- executing-plans
+- requesting-code-review
+- receiving-code-review
+- verification-before-completion
+
+Execution rules:
+
+1. Inspect and synchronize the source worktree first. Never reset or discard unknown changes.
+2. Create the target worktree from the exact clean pushed flowtrace_pmt_v1 HEAD.
+3. Create/push branch acpr_dynflow_v1.
+4. Install the plan under docs/runbooks, the skill under .codex/skills, and the config under configs.
+5. Write an implementation manifest mapping every plan section to code, tests, and dynamic evidence.
+6. Use Agent A as implementer and independent Agent B as adversarial reviewer.
+7. Create the independent formal namespace fate_x/acpr_dynflow.
+8. Do not use ACPRFlowModel, ACPRFlowCalV2Model, TokenPMTAdapter, Sinkhorn, or old FlowCal trainers in the formal import graph.
+9. Do not load ADAPT task weights in ACPR-DynFlow training. ADAPT is a separate comparison-only evaluation.
+10. Resolve and record the exact user's ACPR-CalAlign V1.2 OIA predicate checkpoint and exact 32-predicate ontology. Formal review must fail if unresolved.
+11. Train directly from 32-frame image tensors. No visual/token/logit cache.
+12. Implement every architecture component exactly:
+    - transferred named predicate queries;
+    - recurrent entmax predicate field;
+    - per-predicate nnPU and CalAlign;
+    - covariate homogenization;
+    - 1×/2×/4× pattern routing;
+    - left/center/right mesoscopic flow;
+    - 13 compositional states and lateral bias;
+    - response-lag alignment;
+    - independent global decision stream;
+    - exact factor-decomposed speed/course ledger;
+    - independent BERT action/explanation decoder;
+    - explanation alignment to real decision contributions.
+13. Implement one fixed 20-epoch end-to-end training run. No staged training and no metric early stop.
+14. Use the exact ADAPT-compatible text and continuous-control evaluators. Prove parity using saved ADAPT outputs before training.
+15. Evaluate test after every epoch, save all best checkpoints, and use the decision-first text-safe test selector.
+16. Add the traffic-flow influence audit; it is additional to ADAPT metrics, not a replacement.
+17. Do not start formal training until the independent audit creates REVIEW_PASS_ACPR_DYNFLOW_V1.txt for the exact clean pushed SHA.
+18. Probe BF16 direct-image batches and select the largest stable configuration at or below 46 GiB reserved; target 42–46 GiB without dummy allocation.
+19. Launch only through the attached foreground supervisor. No Start-Process, Start-Job, nohup, shell &, hidden window, or detached process.
+20. Do not stop due to low or declining metrics. Stop only on full completion, explicit user stop sentinel, or unrecoverable hardware loss.
+21. On recoverable failure: preserve checkpoint/logs, debug, add regression test, commit, push, invalidate/re-run audit, resume latest, and continue.
+22. Update only the established task/findings/progress status ledgers. Do not create new experiment-status Markdown files.
+23. Push code/config/tests/runbooks/skill to GitHub. Never commit datasets, checkpoints, predictions, visuals, or .background_runs.
+
+Start with context reading, source Git safety inspection, Superpowers plan review, and target-worktree creation. Do not train first.

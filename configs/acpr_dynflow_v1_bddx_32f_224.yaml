@@ -1,0 +1,316 @@
+﻿config_version: acpr_dynflow_v1
+experiment_name: acpr_dynflow_v1_bddx_32f_224
+protocol_tag: test_selected_user_requested
+
+repository:
+  source_worktree: E:/sbw/FATE_Drive/fate_x_flowtrace_pmt_v1_worktree
+  source_branch: flowtrace_pmt_v1
+  target_worktree: E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree
+  target_branch: acpr_dynflow_v1
+  github_remote: github
+  require_source_clean_and_synced: true
+  require_target_clean_and_synced: true
+
+paths:
+  train_yaml: datasets_part/BDDX/training_32frames.yaml
+  test_caption_yaml: datasets/BDDX/testing_32frames.yaml
+  test_signal_yaml: datasets_part/BDDX/testing_32frames.yaml
+
+  video_swin_kinetics_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
+  bert_dir: models/captioning/bert-base-uncased
+
+  oia_acpr_checkpoint: UNRESOLVED_REQUIRED_FATE_OIA_ACPR_CALALIGN_V1_2_QUERY_CHECKPOINT
+  oia_predicate_yaml: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/configs/acpr_scene_predicates.yaml
+  oia_source_branch: acpr_calalign_v1_2
+
+  adapt_reference_checkpoint: REQUIRED_DISCOVER_FROM_ADAPT_REPRO_RECORDS
+  output_root: E:/sbw/FATE_Drive/active_runs
+  preflight_dir: .background_runs/acpr_dynflow_v1_preflight
+
+data:
+  frames: 32
+  image_resolution: 224
+  direct_image_training: true
+  feature_cache_enabled: false
+  token_cache_enabled: false
+  prediction_cache_enabled: false
+  use_sep_cap: true
+  action_max_tokens: 15
+  explanation_max_tokens: 15
+  max_seq_length: 30
+  mask_prob: 0.5
+  max_masked_tokens: 45
+  invalid_control_value: -1.0
+  num_workers: 6
+  pin_memory: true
+  persistent_workers: true
+  formal_eval_splits: [test]
+
+model:
+  independent_from_adapt_checkpoint: true
+  state_dim: 256
+  decision_dim: 512
+  text_hidden_dim: 768
+
+  backbone:
+    architecture: video_swin_base
+    initialization: kinetics600
+    one_forward_per_batch: true
+    local_stage: 2
+    coarse_stage: 3
+    freeze_stages: [0, 1]
+    train_stages: [2, 3]
+
+  oia_transfer:
+    required: true
+    num_predicates: 32
+    use_oia_query: true
+    use_name_embedding: true
+    trainable_residual: true
+    anchor_weight: 0.02
+
+  predicates:
+    assignment: entmax15
+    recurrent_query: gru_shared
+    region_priors: true
+    ego_motion_compensation: coarse_local_correlation
+    output_lane_mass: true
+    anonymous_slots_forbidden: true
+
+  nnpu:
+    enabled: true
+    rules_yaml: configs/acpr_dynflow_text_rules.yaml
+    nonnegative_risk: true
+    unknown_as_negative: false
+    online_train_histograms: true
+    per_predicate_prior: true
+    per_predicate_threshold: true
+    per_predicate_temperature: true
+
+  covariates:
+    fields:
+      - presence
+      - presence_delta
+      - centroid_xy
+      - relative_centroid_delta
+      - left_center_right_mass
+      - confidence
+    shared_homogenizer: true
+
+  pattern_router:
+    scales: [1, 2, 4]
+    progressive_coarse_to_fine: true
+    patterns: [stable, forming, releasing, oscillating]
+    low_rank_adapter_rank: 32
+    weak_semantic_targets: true
+
+  mesoscopic_flow:
+    corridors: [left, center, right]
+    use_dynamic_participant_predicates_only: true
+    outputs:
+      - occupancy_proxy
+      - relative_mobility
+      - motion_coherence
+      - stopped_tendency
+      - queue_pressure
+      - gap_openness
+
+  traffic_states:
+    regimes: [clear_open_flow, stable_following, dense_following, queue_congestion]
+    phases: [forming, stable, releasing, oscillating]
+    sources: [traffic_signal, lead_vehicle_group, merge_lane_constraint, turn_intersection, vulnerable_obstacle_conflict]
+    lateral_bias: true
+    assignment: entmax15
+    low_rank_composition_rank: 4
+    grammar_yaml: configs/acpr_dynflow_traffic_grammar.yaml
+    evidence_lineage: true
+
+  response_lag:
+    enabled: true
+    lags: [0, 1, 2, 3]
+    causal: true
+
+  decision:
+    global_stream:
+      temporal_mixer_layers: 2
+      output_queries: 32
+      output_signals: [course, speed]
+    ledger:
+      exact_additive_decomposition: true
+      separate_speed_course_readers: true
+      flow_residual_target: true
+      speed_longitudinal_prior: true
+      course_lateral_prior: true
+
+  text:
+    initialization: generic_bert_base
+    load_adapt_checkpoint: false
+    freeze_bottom_layers: 8
+    train_top_layers: 4
+    separate_action_explanation_losses: true
+    explanation_detach_global_decision: true
+    contribution_alignment: true
+    inference_gt_text_forbidden: true
+
+loss:
+  final_speed_normalized: 1.00
+  final_course_normalized: 1.00
+  global_speed_normalized: 0.50
+  global_course_normalized: 0.50
+  flow_residual_speed: 0.25
+  flow_residual_course: 0.25
+  control_first_difference: 0.20
+
+  action_text: 0.35
+  explanation_text: 0.50
+
+  predicate_nnpu: 0.10
+  predicate_query_anchor: 0.02
+  pattern_semantic: 0.05
+  traffic_grammar: 0.02
+  contribution_alignment: 0.05
+  temporal_consistency: 0.02
+  contribution_sparsity: 0.01
+  contribution_smoothness: 0.01
+
+  hardpair: 0.0
+  scst: 0.0
+  uncertainty_weighting: false
+  gradient_firewall: false
+  adapt_distillation: 0.0
+
+optimization:
+  epochs: 20
+  optimizer: adamw
+  precision: bf16
+  gradient_checkpointing: true
+  gradient_clip_norm: 1.0
+  warmup_ratio: 0.05
+  scheduler: cosine
+  min_lr_ratio: 0.05
+  metric_based_early_stop: false
+
+  learning_rates:
+    video_swin_stages_2_3: 0.000010
+    predicate_transfer_query_gru: 0.000100
+    nnpu_score_heads: 0.000050
+    homogenizer_pattern_router: 0.000100
+    traffic_state_reasoner: 0.000100
+    response_lag: 0.000050
+    global_decision_stream: 0.000100
+    decision_ledger: 0.000075
+    bert_top4: 0.000020
+    text_state_contribution_adapters: 0.000050
+    lm_head: 0.000020
+
+  weight_decay:
+    new_weights: 0.01
+    backbone_weights: 0.05
+    bias_norm_gate: 0.0
+
+  contribution_scale_warmup_ratio: 0.05
+
+memory_probe:
+  candidates:
+    - {batch_size: 10, gradient_accumulation_steps: 7}
+    - {batch_size: 8, gradient_accumulation_steps: 8}
+    - {batch_size: 6, gradient_accumulation_steps: 11}
+    - {batch_size: 5, gradient_accumulation_steps: 13}
+    - {batch_size: 4, gradient_accumulation_steps: 16}
+    - {batch_size: 3, gradient_accumulation_steps: 22}
+    - {batch_size: 2, gradient_accumulation_steps: 32}
+  warmup_steps: 3
+  measured_steps: 30
+  preferred_peak_reserved_gib: [42.0, 46.0]
+  hard_peak_reserved_limit_gib: 46.0
+  minimum_headroom_gib: 1.5
+  select_largest_stable: true
+  dummy_allocation_forbidden: true
+  effective_batch_target: 64
+
+evaluation:
+  after_every_epoch: true
+  eval_splits: [test]
+  validation_loader_forbidden: true
+  beam_size: 1
+
+  text_metrics: [Bleu_1, Bleu_2, Bleu_3, Bleu_4, METEOR, ROUGE_L, CIDEr, SPICE]
+  control_metrics: [RMSE, MAE, Acc@0.1, Acc@0.5, Acc@1, Acc@5, Acc@10]
+
+  save_best:
+    - text
+    - control
+    - joint
+    - test
+  best_text_metric: cider_description_plus_explanation
+  best_control_metric: normalized_rmse_vs_measured_adapt
+  best_test_selector: decision_first_text_safe_lexicographic
+  best_test_text_floor_ratio: 0.85
+
+  lightweight_flow_audit_samples: 256
+  lightweight_flow_audit_every_epoch: true
+  full_flow_audit_on_best_only: true
+
+faithfulness:
+  final_interventions:
+    - all_flow_off
+    - regime_off
+    - phase_off
+    - source_off
+    - top_factor_off
+    - predicate_off
+    - evidence_tube_off
+    - random_equal_mass
+    - temporal_shuffle
+    - temporal_reverse
+    - lag_disabled
+    - last_frame_only
+  random_equal_mass_trials: 5
+  conditional_subsets:
+    - all
+    - traffic_signal
+    - queue_following
+    - turn_left
+    - turn_right
+    - merge_lane_change
+    - vulnerable_road_user
+  bootstrap_trials: 1000
+  permutation_trials: 1000
+
+visualization:
+  fixed_cases_per_epoch: 8
+  best_checkpoint_cases: 256
+  keyframes_per_case: 8
+  canvas_png: true
+  source_json: true
+  atlas_html: true
+  manual_boxes_forbidden: true
+  fabricated_effects_forbidden: true
+
+preflight:
+  review_pass_file: REVIEW_PASS_ACPR_DYNFLOW_V1.txt
+  direct_image_smoke_steps: 8
+  mechanism_subset_samples: 128
+  require_metric_parity: true
+  require_model_independence: true
+  require_oia_transfer: true
+  require_gradient_chain: true
+  require_temporal_lag_necessity: true
+  require_real_intervention: true
+  require_visual_canvas: true
+  require_memory_probe: true
+
+supervisor:
+  foreground_only: true
+  heartbeat_seconds: 60
+  metric_based_stop: false
+  transient_retry_count: 3
+  oom_fallback: true
+  resume_latest: true
+  reject_tmp_checkpoints: true
+  require_review_pass: true
+  require_clean_worktree: true
+  require_remote_sha_match: true
+  user_stop_sentinel: control/STOP_REQUESTED_BY_USER
+  complete_only_after_full_suite: true
+

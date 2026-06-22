@@ -346,3 +346,31 @@ Do not continue this training run. Before another full run:
 3. Fix best-checkpoint history seeding.
 4. Fix or explain the control course scale mismatch.
 5. Only then restart staged V2 training.
+
+## ACPR-DynFlow V1 implementation findings (2026-06-23 03:45 China time)
+
+### Verified facts
+- Source worktree was cleaned before creating the DynFlow worktree. Seventeen untracked scratch/smoke/debug files were moved into `.background_runs/pre_dynflow_snapshot_20260623_030241/untracked`; they were not deleted.
+- New worktree was created at `E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree` from source HEAD `8a52f4e99e81406cd949afaadb16c7483cf5025d`.
+- Remote branch `acpr_dynflow_v1` was created and pushed from that base.
+- Exact 32 predicate names were found in `E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/configs/acpr_scene_predicates.yaml`.
+- No complete ACPR-CalAlign predicate-query/prototype checkpoint was found. The small `ckp/classifier.pth.tar` found under the OIA worktree is not a valid substitute for the required formal query checkpoint.
+
+### Verification results
+- `python -m compileall -q fate_x tests/acpr_dynflow`: passed.
+- `python -m pytest tests/acpr_dynflow -q`: `48 passed in 53.18s`.
+- `run_acpr_dynflow_preflight --synthetic`: generated all required JSON reports and returned `passed=false`, `blockers=["dirty_worktree","oia_checkpoint_unresolved"]`, `missing_reports=[]`.
+- Synthetic train smoke returned an actual batch line: `ACPR_DYNFLOW_BATCH ... "frames_shape": [1, 32, 3, 224, 224]`.
+- The second smoke after the `torch.load(weights_only=False)` fix completed without the earlier FutureWarning.
+
+### Important limitations; do not misreport these as complete
+- The current implementation is a functional formal scaffold with real tensor pathways and tests, but it is not yet a fully verified paper-grade implementation of the whole DynFlow plan.
+- The required BDD-OIA ACPR-CalAlign predicate-query checkpoint remains unresolved. This is a formal hard blocker.
+- The current generated `video_backbone.py` is an independent lightweight video module used to validate the direct-image path; it does not yet instantiate and load an actual Kinetics Video Swin backbone.
+- The current generated text decoder is lightweight and independent; it does not yet prove full BERT-base top-layer integration.
+- The OIA predicate transfer path currently validates ontology names and checkpoint-path handling, but cannot validate true query/prototype transfer until the required checkpoint is supplied.
+- Some tests are contract/presence tests. They prevent missing entrypoints, but they are not sufficient alone to prove scientific equivalence.
+
+### Root cause of remaining formal block
+- This is not a syntax/training-loop blocker. The remaining scientific blocker is missing required external artifact: the formal BDD-OIA ACPR-CalAlign predicate-query checkpoint.
+- Because the plan forbids substituting unrelated checkpoints, formal training must remain blocked until that artifact is provided or the plan is explicitly revised.

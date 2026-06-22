@@ -1,0 +1,22 @@
+traffic_light_red:
+  positive: ["red light", "traffic light is red"]
+  contradiction: ["green light"]
+  exclusion: ["light traffic"]
+traffic_light_green:
+  positive: ["green light", "traffic light is green"]
+  contradiction: ["red light"]
+  exclusion: ["light traffic"]
+front_vehicle_close:
+  positive: ["car ahead", "vehicle in front", "traffic ahead"]
+  contradiction: ["open road", "clear road"]
+road_clear:
+  positive: ["clear road", "open road", "no traffic"]
+  contradiction: ["traffic ahead", "crowded"]
+pedestrian_front:
+  positive: ["pedestrian", "person crossing"]
+  contradiction: []
+default:
+  positive: []
+  contradiction: []
+  exclusion: []
+

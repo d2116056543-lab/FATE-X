@@ -1,0 +1,32 @@
+{
+  "created_at_utc": "2026-06-22T18:42:56.735226+00:00",
+  "package": "ACPR-DynFlow V1 Codex implementation package",
+  "target_repository": "d2116056543-lab/FATE-X",
+  "source_branch": "flowtrace_pmt_v1",
+  "target_branch": "acpr_dynflow_v1",
+  "source_worktree": "E:\\sbw\\FATE_Drive\\fate_x_flowtrace_pmt_v1_worktree",
+  "target_worktree": "E:\\sbw\\FATE_Drive\\fate_x_acpr_dynflow_v1_worktree",
+  "formal_epochs": 20,
+  "files": {
+    "Codex_ACPR_DynFlow_V1_Implementation_Plan.md": {
+      "bytes": 48091,
+      "sha256": "135267d423ad51116ff20bed368f787921a6acf61c1513f4d2a926eea0a1673c"
+    },
+    "acpr-dynflow-implementation-audit_SKILL.md": {
+      "bytes": 18757,
+      "sha256": "4710ad207f6e017301d288cbeb08a419115d8c8cfdc61088d3e7f4d32175ca05"
+    },
+    "acpr_dynflow_v1_bddx_32f_224.yaml": {
+      "bytes": 8521,
+      "sha256": "2cc81cfec6f57f9a7c1ebaca74ad46ca1077cf0220f32486efd06d451f59a1cb"
+    },
+    "Codex_ACPR_DynFlow_V1_Bootstrap_Prompt.txt": {
+      "bytes": 4174,
+      "sha256": "d44c7456ae4c03bfe3e77d796bf44f3a658178879cc8ec5d6fa39004dc55d687"
+    },
+    "ACPR_DynFlow_V1_File_Level_Checklist.md": {
+      "bytes": 4311,
+      "sha256": "ac8e1a44c6adab1b2f04803cdd45ece42436bdb5f3ea43a25e1271960681bc34"
+    }
+  }
+}
