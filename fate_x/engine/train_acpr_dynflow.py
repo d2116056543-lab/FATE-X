@@ -75,7 +75,7 @@ def train(
     epochs: int | None = None,
     max_steps: int = -1,
     max_train_samples: int = -1,
-    max_eval_samples: int = 8,
+    max_eval_samples: int = -1,
     synthetic: bool = False,
 ) -> None:
     cfg = load_dynflow_config(config)
@@ -84,6 +84,7 @@ def train(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "review_pass_used.txt").write_text(str(review_pass), encoding="utf-8")
     (out_dir / "config_resolved.json").write_text(json.dumps(cfg.raw, indent=2), encoding="utf-8")
+    eval_max_samples = int(max_eval_samples) if int(max_eval_samples) >= 0 else int(cfg.raw.get("evaluation", {}).get("best_checkpoint_cases", -1))
     formal_epochs = int(cfg.get("optimization", "epochs", default=20)) if epochs is None else int(epochs)
     first_candidate = cfg.raw.get("memory_probe", {}).get("candidates", [{}])[0]
     bs = int(batch_size or first_candidate.get("batch_size") or 1)
@@ -105,6 +106,7 @@ def train(
                 "effective_batch_size": bs * accum_steps,
                 "optimizer_steps_per_epoch": optimizer_steps_per_epoch,
                 "source": "cli_or_memory_probe_config",
+                "eval_max_samples": eval_max_samples,
             },
             indent=2,
         ),
@@ -160,7 +162,7 @@ def train(
         torch.save(ckpt, tmp)
         tmp.replace(out_dir / "checkpoint_latest.pth")
         eval_dir = out_dir / f"epoch_{epoch:03d}"
-        metrics = evaluate(config=config, checkpoint=str(out_dir / "checkpoint_latest.pth"), output_dir=str(eval_dir), device=device, max_samples=max_eval_samples, synthetic=synthetic)
+        metrics = evaluate(config=config, checkpoint=str(out_dir / "checkpoint_latest.pth"), output_dir=str(eval_dir), device=device, max_samples=eval_max_samples, synthetic=synthetic)
         speed_rmse = metrics.get("signals", {}).get("speed", {}).get("rmse")
         course_rmse = metrics.get("signals", {}).get("course", {}).get("rmse")
         control_score = float("inf") if speed_rmse is None or course_rmse is None else float(speed_rmse) + float(course_rmse)
@@ -192,7 +194,7 @@ def main() -> None:
     p.add_argument("--epochs", type=int)
     p.add_argument("--max_steps", type=int, default=-1)
     p.add_argument("--max_train_samples", type=int, default=-1)
-    p.add_argument("--max_eval_samples", type=int, default=8)
+    p.add_argument("--max_eval_samples", type=int, default=-1)
     p.add_argument("--synthetic", action="store_true")
     args = p.parse_args()
     train(**vars(args))
