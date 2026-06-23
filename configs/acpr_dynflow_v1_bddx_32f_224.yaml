@@ -232,6 +232,7 @@ evaluation:
   after_every_epoch: true
   eval_splits: [test]
   validation_loader_forbidden: true
+  best_checkpoint_cases: 256
   beam_size: 1
 
   text_metrics: [Bleu_1, Bleu_2, Bleu_3, Bleu_4, METEOR, ROUGE_L, CIDEr, SPICE]

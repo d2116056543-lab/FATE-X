@@ -84,7 +84,14 @@ def train(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "review_pass_used.txt").write_text(str(review_pass), encoding="utf-8")
     (out_dir / "config_resolved.json").write_text(json.dumps(cfg.raw, indent=2), encoding="utf-8")
-    eval_max_samples = int(max_eval_samples) if int(max_eval_samples) >= 0 else int(cfg.raw.get("evaluation", {}).get("best_checkpoint_cases", -1))
+    if int(max_eval_samples) >= 0:
+        eval_max_samples = int(max_eval_samples)
+    else:
+        eval_cfg = cfg.raw.get("evaluation", {})
+        viz_cfg = cfg.raw.get("visualization", {})
+        eval_max_samples = int(
+            eval_cfg.get("best_checkpoint_cases", viz_cfg.get("best_checkpoint_cases", eval_cfg.get("lightweight_flow_audit_samples", -1)))
+        )
     formal_epochs = int(cfg.get("optimization", "epochs", default=20)) if epochs is None else int(epochs)
     first_candidate = cfg.raw.get("memory_probe", {}).get("candidates", [{}])[0]
     bs = int(batch_size or first_candidate.get("batch_size") or 1)
