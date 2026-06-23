@@ -669,3 +669,51 @@ Generated: 2026-06-23 00:12:56
 - Compact report: passed=true, lockers=[], missing_reports=[], ailed_reports=[].
 - Confirmed OIA audit from oia_predicate_transfer_audit.json and gradient audit from gate_gradient_chain.json.
 - This section will be committed as documentation, then another final preflight must be run for the final post-doc HEAD.
+## 2026-06-23 ACPR-DynFlow V1 训练监督时间线
+
+### 12:00 前后：发现旧 run 无效
+
+- 旧 formal run 使用 commit `50505c1`。
+- 训练日志显示 `explanation_text=0.0`。
+- 判断：该 run 不满足 ACPR-DynFlow V1 计划，因为 explanation supervision 没有真实进入训练。
+- 处理：停止旧 run，不再把它作为有效 baseline 或 continuation source。
+
+### 修复阶段：masked text supervision
+
+- 修改：`fate_x/acpr_dynflow/text_decoder.py`
+- 新增：`tests/acpr_dynflow/test_text_decoder_masked_positions.py`
+- 验证：targeted pytest 通过，compileall 通过，`pytest tests/acpr_dynflow -q` 为 `54 passed`。
+- 代码提交：`e66bce98285883315b949250dd73ec17df3f3214`，commit message 为 `Fix DynFlow masked text supervision`。
+- 推送：已推到 GitHub branch `acpr_dynflow_v1`。
+
+### 修复后 smoke/formal run
+
+- smoke 确认：`explanation_text` 恢复为非零，说明 mask 修复生效。
+- formal task：`acpr_dynflow_v1_full_e66bce9_20260623_0922`
+- run dir：`G:\sbw\FATE_Drive\active_runs\acpr_dynflow_v1_formal_e66bce9_maskfix_schtasks_20260623_0922`
+- 配置要点：batch size `10`，gradient accumulation `7`，有效 batch 约 `70`，显存约 `45.6G/49.1G`。
+
+### batch 推进记录
+
+- 约 09:30：batch 2，run 正常启动。
+- 约 09:44：batch 23。
+- 约 10:04：batch 54。
+- 约 10:35：batch 99。
+- 约 11:06：batch 144。
+- 约 11:46：batch 204。
+- 约 12:20：停止于 batch `254/1639`。
+
+停止原因：单 epoch 预计约 `18-21` 小时，完整 20 epoch 训练不具备当前实验价值；继续跑无法快速得到一轮 eval 或 checkpoint。
+
+### 停止状态
+
+- 已执行 `schtasks /End /TN acpr_dynflow_v1_full_e66bce9_20260623_0922`。
+- 已确认无匹配 `train_acpr_dynflow` Python 进程。
+- GPU 释放后约 `930 MiB / 49140 MiB`，利用率 `0%`。
+- 因未完成 epoch 0，所以没有产生新的 checkpoint 或 per-epoch eval。
+
+### 记录同步
+
+- 监督日志文档更新 commit：`19e6927cde27456272f693efc4d92feb6540c251`，commit message 为 `Update DynFlow supervision log after mask fix`。
+- 当前追加记录会继续提交到同一 branch，用于保留这轮训练停止、慢速根因和后续计划修正。
+

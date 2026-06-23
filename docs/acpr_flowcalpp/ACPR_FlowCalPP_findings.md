@@ -495,3 +495,62 @@ Do not continue this training run. Before another full run:
 - The 0515 final preflight proved the current code path at HEAD $head had no review blockers, loaded the real OIA predicate queries, and had a valid gradient chain.
 - The OIA report filename is oia_predicate_transfer_audit.json; using oia_predicate_transfer_report.json was only an inspection-script filename mistake, not a preflight failure.
 - Because documentation itself changes HEAD, final pass evidence must always be regenerated after the last commit. This is now an explicit process requirement for future work.
+## 2026-06-23 DynFlow 本轮失败/慢速根因记录
+
+### 1. 无效训练的直接根因：`masked_pos` 语义解析错误
+
+旧 formal run 在 commit `50505c1` 上启动后，训练日志显示 `explanation_text=0.0`，但配置中 explanation text loss 权重并不为 0。这不是模型没有学习到 explanation，而是代码没有正确监督 explanation token。
+
+根因定位：
+
+- BDD-X/ADAPT dataloader 输出的 `masked_pos` 是二值 mask，shape 为 `[B, 30]`。
+- 旧 `DynFlowTextDecoder._masked_position_loss` 把 `masked_pos` 当成显式 token position list 使用。
+- 结果是大量样本只在 token position 0/1 上计算 loss，后半 explanation token 没有进入有效监督。
+- 这会导致训练看似在跑，但 explanation 分支不可能按计划学习。
+
+修复方式：
+
+- 文件：`fate_x/acpr_dynflow/text_decoder.py`
+- 新逻辑：检测 `masked_pos` 是否为二值 mask；如果是，则转换为真实 masked token positions；再与 packed `masked_ids` 对齐计算 masked LM loss。
+- action/explanation 分段 loss 现在按真实 token position 切分，不再依赖错误的 0/1 位置。
+- 新测试：`tests/acpr_dynflow/test_text_decoder_masked_positions.py`
+
+验证结果：
+
+- targeted pytest：`tests/acpr_dynflow/test_text_decoder_masked_positions.py` 通过。
+- `compileall fate_x/acpr_dynflow` 通过。
+- `pytest tests/acpr_dynflow -q`：`54 passed`。
+- 修复后 smoke/formal logs 中 `explanation_text` 为非零。
+
+### 2. 本轮 formal run 不是指标失败，而是计算预算失败
+
+修复后的 formal run：
+
+- task：`acpr_dynflow_v1_full_e66bce9_20260623_0922`
+- run dir：`G:\sbw\FATE_Drive\active_runs\acpr_dynflow_v1_formal_e66bce9_maskfix_schtasks_20260623_0922`
+- commit：`e66bce98285883315b949250dd73ec17df3f3214`
+- stopped at：epoch 0 batch `254/1639`
+- checkpoint/eval：无，因为未完成第一轮。
+
+关键日志片段说明：
+
+- batch 251：`loss=13.7593`, `action_text=4.1367`, `explanation_text=4.6997`, `flow_residual_speed=0.001997`, `flow_residual_course=0.003323`
+- batch 252：`loss=22.0781`, `action_text=4.0920`, `explanation_text=4.6160`
+- batch 253：`loss=13.3351`, `action_text=3.8401`, `explanation_text=5.2892`
+
+这些 loss 是有限值，且 explanation supervision 已经存在；问题不是 NaN/崩溃，而是速度无法接受。
+
+### 3. 为什么一轮会接近 20 小时
+
+之前误解点：`optimizer_steps_per_epoch=235` 很容易被误读成每轮 235 个 batch。但实际训练日志显示 `Total training steps 1639`，这是 dataloader micro-batches。因为 gradient accumulation 为 7，所以约 7 个 micro-batches 才对应一个 optimizer step。
+
+当前慢速来自组合因素：
+
+- 32-frame 224 输入仍走 Video Swin 视觉主干，视频编码计算重。
+- batch size 10 已经把单卡显存推到约 `45.6G/49.1G`，不是显存没用上。
+- 单 GPU 无法复制 ADAPT 原文多卡吞吐。
+- 每个 epoch 必须跑完 1639 个 micro-batches 才能保存 epoch checkpoint 和做 eval，因此不到一轮时没有可比较指标。
+- 在线文本 decode/eval 和额外 DynFlow 中间量记录会进一步增加 wall-clock。
+
+结论：这轮不是 DynFlow 机制已经被证明无效，而是当前 full online training 方案过慢，无法在合理时间内完成一轮并产生评估。下一步应优先解决吞吐和实验粒度，而不是继续等待同一配置。
+

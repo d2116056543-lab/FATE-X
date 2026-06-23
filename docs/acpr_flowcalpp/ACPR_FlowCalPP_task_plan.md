@@ -585,3 +585,29 @@ The previous three-record set was too compressed for the amount of work done acr
 - oia_predicate_transfer_audit.json: oia_loaded=true, source model, source dim 384, checkpoint SHA 84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2.
 - gate_gradient_chain.json: passed=true, missing_components=[], missing_trainable_grad_params=0, rozen_params_with_grad=[].
 - Important: this documentation append changes Git HEAD after the 0515 pass. Therefore a new final preflight/audit must be run again after committing this section; the latest run directory, not this paragraph alone, is the binding proof.
+## 2026-06-23 ACPR-DynFlow V1 训练停止与下一步计划修正
+
+本轮目标原本是启动 ACPR-DynFlow V1 full training 并观察能否在 ADAPT/FlowCalPP 基础上取得稳定提升。但实际训练过程中出现两个必须记录的结论：第一，旧 formal run 的 explanation supervision 没有真正生效；第二，修复后 full run 单 epoch 时间远超可接受范围，当前配置不适合继续完整长训。
+
+本轮已经完成的计划修正如下：
+
+1. 停止无效旧 run。旧 commit `50505c1` 的训练日志中 `explanation_text=0.0`，说明解释文本损失没有进入有效监督。该 run 不能作为有效实验结果继续承接。
+2. 修复文本监督落地问题。`fate_x/acpr_dynflow/text_decoder.py` 已修正 `masked_pos` 解析逻辑：ADAPT/BDDX dataloader 提供的是二值 mask `[B, 30]`，不是显式 token 位置列表；现在会先转换为真实 token positions，再用 packed `masked_ids` 计算 action/explanation 两段 loss。
+3. 新增回归测试。`tests/acpr_dynflow/test_text_decoder_masked_positions.py` 覆盖二值 `masked_pos` 情况，防止 explanation half 再次被静默跳过。
+4. 修复后 smoke 与 formal run 都确认 `explanation_text` 非零，说明文本监督已经恢复。
+5. 正式 full run 已停止。停止点为 epoch 0 batch `254/1639`，尚未完成第一轮，因此没有新的 checkpoint 或 eval 结果。
+
+训练时长问题的计划判断：
+
+- 当前配置的 `optimizer_steps_per_epoch=235` 是优化器步数，不是 dataloader micro-batches。
+- 实际每个 epoch 是 `1639` 个 micro-batches；batch size 为 `10`，gradient accumulation 为 `7`，有效 batch 约 `70`。
+- 该 run 在单卡 48G 上显存占用约 `45.6G/49.1G`，但吞吐仍然较低；按 batch 推进速度估计，单 epoch 约 `18-21` 小时。
+- 因此直接按当前 full Video Swin + 32f + online decode/eval 跑 20 epoch 不现实，继续训练会消耗大量时间但不能快速给出有效结论。
+
+后续计划必须调整为：
+
+1. 以后任何 DynFlow full training 必须以 `e66bce98285883315b949250dd73ec17df3f3214` 之后的代码为最低起点，不能回到 `50505c1` 或更早的文本监督实现。
+2. 不再直接启动 20 epoch 原配置长训；先做更短的 bounded run 或缓存特征路线。
+3. 优先评估加速方案：冻结/缓存 Video Swin 特征、减少在线重复视频编码、使用短 epoch smoke + eval、或调整数据读取与预取，而不是盲目加 batch。
+4. 如果目标是验证 DynFlow 模块是否有效，应先在可控计算预算内跑完至少一个完整 epoch 并完成 ADAPT-aligned eval，再谈是否长训。
+
