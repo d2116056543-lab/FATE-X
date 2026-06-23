@@ -67,3 +67,60 @@
 ## 9. 最终判断
 
 可以报告“代码已推送、关键验证通过、正式实验已启动并输出 batch”。不能报告“完整训练已完成”或“最终指标达标”，因为正式训练仍在运行。
+
+
+## 10. 2026-06-23 二次监督更新：masked text supervision 修复与 e66bce9 正式 run
+
+**状态：** 已发现并修复一项会使正式训练无效的关键监督错误；修复后正式训练已重新启动并输出有效 batch。
+
+### 10.1 发现的问题
+
+- 50505c1 正式 run 虽然能输出 batch，但 `loss_components.explanation_text = 0.0`。
+- 这与配置 `loss.explanation_text = 0.50` 冲突，表示 explanation 半段文本没有被监督，不能继续当作有效正式实验。
+- 已停止无效任务 `acpr_dynflow_v1_full_50505c1_20260623_085221`。
+
+### 10.2 根因
+
+- BDD-X/ADAPT dataloader 的 `masked_pos` 是 `[B, 30]` 二值 mask，不是显式 token position list。
+- 旧 `DynFlowTextDecoder._masked_position_loss` 把 0/1 mask 值当作位置索引，只监督 token 0/1，导致 explanation half 没有有效目标。
+
+### 10.3 修复内容
+
+- 文件：`fate_x/acpr_dynflow/text_decoder.py`
+- 修复：识别二值 mask 格式，将 `masked_pos` 转换为真实 token positions，并用 packed `masked_ids` 标签计算 action/explanation 两段 CE。
+- 新增回归测试：`tests/acpr_dynflow/test_text_decoder_masked_positions.py`
+
+### 10.4 验证证据
+
+- `pytest tests\acpr_dynflow\test_text_decoder_masked_positions.py -q`：1 passed。
+- `python -m compileall fate_x tests\acpr_dynflow -q`：exit 0。
+- `pytest tests\acpr_dynflow -q`：54 passed。
+- `git diff --check`：exit 0。
+- 修复提交：`e66bce98285883315b949250dd73ec17df3f3214`，已 push 到 `github/acpr_dynflow_v1`。
+- preflight：`.background_runs\acpr_dynflow_v1_final_preflight_20260623_e66bce9`，`passed=true`。
+
+### 10.5 修复后 smoke
+
+- run：`G:\sbw\FATE_Drive\active_runs\acpr_dynflow_v1_smoke_e66bce9_maskfix_20260623_0919`
+- smoke exit：0。
+- batch 0 loss：`28.541072845458984`。
+- `action_text = 10.429052352905273`。
+- `explanation_text = 10.449007987976074`。
+- traffic prediction correlation 非空：`pred_speed_delta_corr=-0.15232357382774353`，`pred_course_delta_corr=-0.3011300563812256`。
+
+### 10.6 修复后正式 run 当前状态
+
+- task：`acpr_dynflow_v1_full_e66bce9_20260623_0922`
+- run：`G:\sbw\FATE_Drive\active_runs\acpr_dynflow_v1_formal_e66bce9_maskfix_schtasks_20260623_0922`
+- 训练命令：`E:\Anaconda\envs\sbw39\python.exe -u -m fate_x.engine.train_acpr_dynflow --config configs\acpr_dynflow_v1_bddx_32f_224.yaml --output_dir <run> --device cuda`
+- 当前确认 batch：`249/1639` micro-batches，epoch 0 约 15.2%。
+- 有效 batch：`batch_size=10`，`gradient_accumulation_steps=7`，`effective_batch_size=70`，`optimizer_steps_per_epoch=235`，`eval_max_samples=256`。
+- GPU：约 `45564 MiB / 49140 MiB`。
+- 当前 loss 未见 NaN/Inf；`action_text` 和 `explanation_text` 均持续非零并下降。
+- 重要更正：`optimizer_steps_per_epoch=235` 不是 epoch 的 micro-batch 数；真实每 epoch 需要约 `1639` 个 micro-batch，因此单卡完整 epoch 很慢。当前 run 仍在训练中，尚未到 epoch 0 checkpoint/eval。
+
+### 10.7 当前监督结论
+
+- 可以确认：代码已修复上一版无效 explanation 监督问题，正式 run 已输出有效 batch，GPU/有效 batch/文本监督均符合当前配置。
+- 不能确认：epoch 0 的 checkpoint/eval/traffic-flow audit 已完成；因为当前尚未到 epoch 末尾。
+- 后续必须继续检查：`checkpoint_latest.pth`、`checkpoint_best_text.pth`、`checkpoint_best_control.pth`、`metrics_summary.jsonl`、`traffic_flow_audit.pred_speed_delta_corr` 与 `pred_course_delta_corr`。
