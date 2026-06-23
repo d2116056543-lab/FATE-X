@@ -84,6 +84,40 @@ class DynFlowTextDecoder(nn.Module):
             positions = positions.unsqueeze(0).expand(logits.shape[0], -1)
         if targets.dim() == 1:
             targets = targets.unsqueeze(0).expand(logits.shape[0], -1)
+
+        # ADAPT/OSCAR batches encode `masked_pos` as a binary mask over the
+        # decoded text sequence, while `masked_ids` stores the masked labels
+        # packed at the front. Convert that representation to explicit token
+        # positions before splitting action and explanation halves.
+        is_binary_mask = (
+            positions.shape[1] == logits.shape[1]
+            and bool((positions.ge(0) & positions.le(1)).all())
+            and targets.shape[1] != positions.shape[1]
+        )
+        if is_binary_mask:
+            row_logits = []
+            row_targets = []
+            for row_idx in range(logits.shape[0]):
+                row_positions = torch.nonzero(positions[row_idx].bool(), as_tuple=False).flatten()
+                if row_positions.numel() == 0:
+                    continue
+                row_targets_packed = targets[row_idx, : row_positions.numel()]
+                row_valid = (
+                    row_targets_packed.ge(0)
+                    & row_positions.ge(start)
+                    & row_positions.lt(end)
+                    & row_positions.lt(logits.shape[1])
+                )
+                if not bool(row_valid.any()):
+                    continue
+                row_logits.append(logits[row_idx, row_positions[row_valid]])
+                row_targets.append(row_targets_packed[row_valid])
+            if not row_logits:
+                return logits.sum() * 0.0
+            gathered_logits = torch.cat(row_logits, dim=0)
+            gathered_targets = torch.cat(row_targets, dim=0)
+            return F.cross_entropy(gathered_logits, gathered_targets.clamp_max(logits.shape[-1] - 1))
+
         if positions.shape[1] != targets.shape[1]:
             # ADAPT real batches can carry more masked token ids than decoded text
             # positions. Only entries with both a target id and a decoded position
