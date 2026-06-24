@@ -716,3 +716,9 @@ Generated: 2026-06-23 00:12:56
 
 - 监督日志文档更新 commit：`19e6927cde27456272f693efc4d92feb6540c251`，commit message 为 `Update DynFlow supervision log after mask fix`。
 - 当前追加记录会继续提交到同一 branch，用于保留这轮训练停止、慢速根因和后续计划修正。
+
+## 2026-06-24 ACPR-DynFlow-Swin V1 contract installation start
+
+- Installed formal runbook/config/manifest/audit skill from user package.
+- Verified current worktree and branch before code changes.
+- Formal implementation is not yet complete; training remains blocked until preflight review pass.

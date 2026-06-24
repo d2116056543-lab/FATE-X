@@ -610,3 +610,9 @@ The previous three-record set was too compressed for the amount of work done acr
 2. 不再直接启动 20 epoch 原配置长训；先做更短的 bounded run 或缓存特征路线。
 3. 优先评估加速方案：冻结/缓存 Video Swin 特征、减少在线重复视频编码、使用短 epoch smoke + eval、或调整数据读取与预取，而不是盲目加 batch。
 4. 如果目标是验证 DynFlow 模块是否有效，应先在可控计算预算内跑完至少一个完整 epoch 并完成 ADAPT-aligned eval，再谈是否长训。
+
+## 2026-06-24 ACPR-DynFlow-Swin V1 contract installation start
+
+- Installed formal runbook/config/manifest/audit skill from user package.
+- Verified current worktree and branch before code changes.
+- Formal implementation is not yet complete; training remains blocked until preflight review pass.

@@ -1,0 +1,342 @@
+config_version: acpr_dynflow_swin_v1
+experiment_name: acpr_dynflow_swin_v1_bddx_32f_224
+protocol_tag: test_selected_user_requested
+
+repository:
+  expected_worktree: E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree
+  expected_branch: acpr_dynflow_v1
+  github_remote: github
+  forbid_new_worktree: true
+  forbid_new_branch: true
+  require_clean_worktree: true
+  require_remote_sha_match: true
+
+legacy:
+  formal_namespace: fate_x.acpr_dynflow_swin
+  legacy_acpr_dynflow_enabled: false
+  legacy_acpr_flow_enabled: false
+  legacy_flowtrace_enabled: false
+  legacy_sinkhorn_enabled: false
+  legacy_pmt_enabled: false
+
+paths:
+  train_yaml: datasets_part/BDDX/training_32frames.yaml
+  test_caption_yaml: datasets/BDDX/testing_32frames.yaml
+  test_signal_yaml: datasets_part/BDDX/testing_32frames.yaml
+
+  video_swin_kinetics_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
+  bert_dir: models/captioning/bert-base-uncased
+
+  oia_acpr_checkpoint: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth
+  oia_predicate_yaml: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/configs/acpr_scene_predicates.yaml
+  oia_source_branch: acpr_calalign_v1_2
+
+  adapt_reference_checkpoint: REQUIRED_RESOLVE_FROM_CANONICAL_ADAPT_REPRO_RECORDS
+  output_root: E:/sbw/FATE_Drive/active_runs
+  preflight_dir: .background_runs/acpr_dynflow_swin_v1_preflight
+
+data:
+  frames: 32
+  image_resolution: 224
+  direct_image_training: true
+  feature_cache_enabled: false
+  token_cache_enabled: false
+  prediction_cache_enabled: false
+
+  use_sep_cap: true
+  action_max_tokens: 15
+  explanation_max_tokens: 15
+  max_seq_length: 30
+  mask_prob: 0.5
+  max_masked_tokens: 45
+
+  invalid_control_value: -1.0
+  signal_names: [course, speed]
+
+  execution_environment: wsl_linux
+  num_workers: 8
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  non_blocking_transfer: true
+  cuda_prefetcher: benchmark_then_enable
+
+  formal_eval_splits: [test]
+  validation_loader_forbidden: true
+
+model:
+  independent_from_adapt_task_checkpoint: true
+
+  dimensions:
+    predicate: 256
+    traffic: 256
+    text: 768
+    motion: 768
+
+  backbone:
+    architecture: repository_video_swin_base
+    initialization: kinetics600
+    input_frames: 32
+    input_resolution: 224
+    one_forward_per_batch: true
+    predicate_stage: 2
+    final_stage: 3
+    all_stages_trainable: true
+    forced_fp32_forbidden: true
+    activation_checkpointing: probe_only_fallback
+
+  oia_transfer:
+    required: true
+    exact_predicates: 32
+    use_oia_query: true
+    use_true_bert_name_embedding: true
+    transfer_gate_init: 0.25
+    trainable_dimension_mapper: true
+    trainable_domain_residual: true
+
+  predicates:
+    assignment: entmax15
+    recurrent_query: shared_gru
+    region_priors: true
+    common_ego_shift: coarse_local_correlation
+    output_confidence: true
+    output_corridor_mass: true
+
+  nnpu:
+    enabled: true
+    rules_yaml: configs/acpr_dynflow_swin_text_rules.yaml
+    unknown_as_negative: false
+    nonnegative_risk: true
+    per_predicate_class_prior: true
+    per_predicate_temperature: true
+    per_predicate_thresholds: true
+    update_from_train_only: true
+
+  semantic_consolidation:
+    enabled: true
+    slot_names: [global_action, longitudinal, left_lateral, right_lateral, residual_context]
+    slots_per_native_time: 5
+    expected_native_times: 16
+    expected_total_tokens: 80
+    assignment_normalization: per_source_token_softmax
+    exact_mass_conservation: true
+    provenance: true
+    early_swin_token_pruning: false
+
+  traffic:
+    corridor_names: [left, center, right]
+    pattern_dilations: [1, 2, 4]
+    pattern_names: [stable, forming, releasing, oscillating]
+
+    regimes: [clear_open_flow, stable_following, dense_following, queue_congestion]
+    phases: [forming, stable, releasing, oscillating]
+    sources: [traffic_signal, lead_vehicle_group, merge_lane_constraint, turn_intersection, vulnerable_obstacle_conflict]
+
+    assignment: entmax15
+    composition_rank: 4
+    lateral_bias: true
+    evidence_lineage: true
+    response_lags: [0, 1, 2, 3]
+
+  motion:
+    architecture: bert_query_motion_transformer
+    hidden_size: 768
+    layers: 12
+    heads: 12
+    intermediate_size: 3072
+    output_queries: 32
+    global_temporal_tokens: 16
+    semantic_tokens: 80
+    load_adapt_sensor_weights: false
+    target_values_as_input: false
+
+  ledger:
+    exact_additive_decomposition: true
+    separate_speed_course_readers: true
+    benefit_gate: true
+    benefit_temperature: 0.25
+    non_degradation_margin_normalized: 0.01
+    speed_longitudinal_prior: true
+    course_lateral_prior: true
+
+  text:
+    architecture: repository_bert_for_image_captioning
+    initialization: generic_bert_base
+    load_adapt_task_weights: false
+    autoregressive_sep_cap: true
+    text_visual_tokens:
+      semantic: 80
+      factor_summary: 13
+      contribution_summary: 13
+    contribution_reason_adapter: true
+    explanation_detach_global_motion: true
+    separate_action_explanation_losses: true
+    inference_gt_text_forbidden: true
+
+loss:
+  final_speed_normalized: 1.00
+  final_course_normalized: 1.00
+  global_speed_normalized: 0.50
+  global_course_normalized: 0.50
+  flow_residual_speed: 0.25
+  flow_residual_course: 0.25
+  benefit_gate: 0.05
+  non_degradation: 0.10
+  control_delta_match: 0.10
+
+  action_text: 0.50
+  explanation_text: 0.50
+
+  predicate_nnpu: 0.08
+  predicate_transfer_anchor: 0.02
+  pattern_semantic: 0.04
+  traffic_state_semantic: 0.03
+  contribution_alignment: 0.04
+  contribution_group_sparsity: 0.002
+  contribution_smoothness: 0.005
+
+  hardpair: 0.0
+  scst: 0.0
+  gradient_firewall: false
+  adapt_distillation: 0.0
+  unknown_negative_bce: 0.0
+  global_sinkhorn: 0.0
+
+optimization:
+  epochs: 16
+  optimizer: adamw
+  precision: bf16
+  allow_fp16_fallback: false
+  tf32: true
+  cudnn_benchmark: true
+  gradient_clip_norm: 1.0
+  effective_batch_target: 64
+
+  warmup_ratio: 0.10
+  scheduler: linear_decay
+  min_lr_ratio: 0.0
+  metric_based_early_stop: false
+
+  learning_rates:
+    new_motion_traffic_ledger_heads: 0.00020
+    predicate_query_temporal: 0.00010
+    caption_bert_and_lm_head: 0.00005
+    video_swin_backbone: 0.00001
+
+  weight_decay:
+    new_weights: 0.01
+    backbone_weights: 0.05
+    bias_norm_gate: 0.0
+
+  contribution_scale_warmup_ratio: 0.05
+
+memory_throughput_probe:
+  candidates:
+    - {batch_size: 8, gradient_accumulation_steps: 8}
+    - {batch_size: 6, gradient_accumulation_steps: 11}
+    - {batch_size: 4, gradient_accumulation_steps: 16}
+    - {batch_size: 3, gradient_accumulation_steps: 22}
+    - {batch_size: 2, gradient_accumulation_steps: 32}
+
+  warmup_steps: 10
+  measured_steps: 100
+  preferred_peak_reserved_gib: [36.0, 42.0]
+  hard_peak_reserved_limit_gib: 44.0
+  minimum_headroom_gib: 3.0
+
+  selection_metric: highest_samples_per_second
+  projected_train_epoch_limit_hours: 4.0
+  maximum_data_time_fraction: 0.20
+  dummy_allocation_forbidden: true
+
+evaluation:
+  after_every_epoch: true
+  eval_splits: [test]
+  validation_loader_forbidden: true
+  beam_size: 1
+
+  text_metrics: [Bleu_1, Bleu_2, Bleu_3, Bleu_4, METEOR, ROUGE_L, CIDEr, SPICE]
+  control_metrics: [RMSE, MAE, Acc@0.1, Acc@0.5, Acc@1, Acc@5, Acc@10]
+
+  save_best: [text, control, joint, test]
+  best_text_metric: cider_description_plus_explanation
+  best_control_metric: normalized_rmse_vs_measured_adapt
+  best_test_selector: decision_first_text_safe_lexicographic
+  best_test_text_floor_ratio: 0.85
+
+  lightweight_flow_audit_samples: 256
+  lightweight_flow_audit_every_epoch: true
+  full_flow_audit_on_best_only: true
+
+faithfulness:
+  final_interventions:
+    - all_flow_off
+    - regime_off
+    - phase_off
+    - source_off
+    - top_factor_off
+    - predicate_off
+    - evidence_tube_off
+    - random_equal_mass
+    - temporal_shuffle
+    - temporal_reverse
+    - lag_disabled
+    - last_frame_only
+    - residual_slot_only
+
+  random_equal_mass_trials: 5
+  conditional_subsets:
+    - all
+    - traffic_signal
+    - queue_following
+    - turn_left
+    - turn_right
+    - merge_lane_change
+    - vulnerable_road_user
+
+  bootstrap_trials: 1000
+  permutation_trials: 1000
+
+visualization:
+  fixed_cases_per_epoch: 8
+  best_checkpoint_cases: 256
+  keyframes_per_case: 8
+  canvas_png: true
+  source_json: true
+  atlas_html: true
+  manual_boxes_forbidden: true
+  fabricated_effects_forbidden: true
+
+preflight:
+  review_pass_dir: .background_runs/acpr_dynflow_swin_v1_preflight
+  review_pass_file: REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt
+
+  direct_image_smoke_steps: 8
+  mechanism_subset_samples: 128
+
+  require_adapt_metric_parity: true
+  require_model_independence: true
+  require_oia_transfer: true
+  require_real_nnpu_labels: true
+  require_mass_conservation: true
+  require_exact_ledger: true
+  require_autoregressive_decode: true
+  require_gradient_chain: true
+  require_temporal_lag_necessity: true
+  require_real_intervention: true
+  require_visual_canvas: true
+  require_throughput_gate: true
+
+supervisor:
+  foreground_only: true
+  heartbeat_seconds: 60
+  metric_based_stop: false
+  transient_retry_count: 3
+  oom_fallback: true
+  resume_latest: true
+  reject_tmp_checkpoints: true
+  require_review_pass: true
+  require_clean_worktree: true
+  require_remote_sha_match: true
+  user_stop_sentinel: control/STOP_REQUESTED_BY_USER
+  complete_only_after_full_suite: true

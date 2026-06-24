@@ -553,3 +553,8 @@ Do not continue this training run. Before another full run:
 - 在线文本 decode/eval 和额外 DynFlow 中间量记录会进一步增加 wall-clock。
 
 结论：这轮不是 DynFlow 机制已经被证明无效，而是当前 full online training 方案过慢，无法在合理时间内完成一轮并产生评估。下一步应优先解决吞吐和实验粒度，而不是继续等待同一配置。
+
+## 2026-06-24 DynFlow-Swin initial gap
+
+- Formal contract files were missing from the repo at start: runbook, manifest, audit skill, and config.
+- Existing legacy `fate_x.acpr_dynflow` contains known prohibited defects and cannot be used as the formal namespace.
