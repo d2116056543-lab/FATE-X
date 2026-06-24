@@ -16,12 +16,13 @@ class DynamicPredicateFieldBuilder(nn.Module):
         self.key = nn.Linear(dim, dim, bias=False)
         self.value = nn.Linear(dim, dim, bias=False)
 
-    def forward(self, predicate_grid: Tensor) -> DynamicPredicateField:
+    def forward(self, predicate_grid: Tensor, base_queries: Tensor | None = None) -> DynamicPredicateField:
         bsz, steps, height, width, dim = predicate_grid.shape
         flat = predicate_grid.reshape(bsz, steps, height * width, dim)
         keys = self.key(flat)
         values = self.value(flat)
-        scores = torch.einsum("kd,bthd->btkh", self.queries, keys) / max(dim, 1) ** 0.5
+        queries = self.queries if base_queries is None else base_queries
+        scores = torch.einsum("kd,bthd->btkh", queries, keys) / max(dim, 1) ** 0.5
         evidence = F.softmax(scores, dim=-1)
         tokens = torch.einsum("btkh,bthd->btkd", evidence, values)
         logits = tokens.mean(-1)
@@ -44,7 +45,7 @@ class DynamicPredicateFieldBuilder(nn.Module):
         )
         return DynamicPredicateField(
             names=EXACT_32_PREDICATES,
-            query_states=self.queries.unsqueeze(0).unsqueeze(0).expand(bsz, steps, -1, -1),
+            query_states=queries.unsqueeze(0).unsqueeze(0).expand(bsz, steps, -1, -1),
             logits=logits,
             probabilities=probs,
             tokens=tokens,

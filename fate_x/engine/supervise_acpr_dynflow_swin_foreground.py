@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+from fate_x.engine.audit_acpr_dynflow_swin import verify_review_pass
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -13,8 +15,13 @@ def main() -> None:
     parser.add_argument("--require_review_pass", action="store_true")
     args = parser.parse_args()
     pass_file = Path(".background_runs/acpr_dynflow_swin_v1_preflight/REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt")
-    if args.require_review_pass and not pass_file.exists():
-        raise SystemExit(f"review pass missing: {pass_file}")
+    if args.require_review_pass:
+        if not pass_file.exists():
+            raise SystemExit(f"review pass missing: {pass_file}")
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        validation = verify_review_pass(pass_file, expected_head=head)
+        if not validation["passed"]:
+            raise SystemExit(f"review pass invalid: {validation['blockers']}")
     cmd = [sys.executable, "-m", "fate_x.engine.train_acpr_dynflow_swin", "--config", args.config]
     child = subprocess.Popen(cmd)
     while child.poll() is None:

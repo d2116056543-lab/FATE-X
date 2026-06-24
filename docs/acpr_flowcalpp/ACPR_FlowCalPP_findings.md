@@ -604,3 +604,70 @@ ate_oia.engine.train_acpr_oia --test_only is consuming ~32GB GPU. Throughput/mem
 - The latest clean pushed SHA verifies that the repository state itself is synchronized, but the method is still not fully implemented according to the formal plan.
 - The completed part is important but limited: real WSL/CUDA direct-image path now runs one BDD-X batch through repository Video Swin-B with backward gradients and the current 100-step probe estimates `<2h/epoch`.
 - The uncompleted blockers are mechanism-level, not infrastructure-level. Training now would produce data from an incomplete method, especially because nnPU is zero, ADAPT metric parity is not proven, formal autoregressive decoder/eval parity is not proven, interventions are not proven to recompute earliest affected layers, and Canvas/Atlas evidence is absent.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 additional root causes
+
+New RED tests exposed three previously hidden formal-path defects:
+
+1. `PatternLagTrafficReasoner` had no dilation branches and its pattern output did not affect factor tokens.
+2. `lag_logits` was one global four-value vector; aligned tokens were only repeat-interpolated, so response lag was decorative.
+3. semantic-token conservation was computed in BF16 and reported errors as high as `0.125`, above the formal `1e-3` BF16 tolerance.
+
+Fixes and evidence:
+
+- added temporal Conv1d branches with dilations `1/2/4`, progressive fusion, and pattern-to-factor injection;
+- changed lag parameters to `[13,4]` and applied causal shifts for lags `0..3`;
+- moved assignment, mass, weighted-token, and conservation calculations to FP32;
+- RED result: `3 failed, 1 passed`;
+- GREEN result: `4 passed`.
+
+A second review found that the decision ledger used one shared `Linear(dim,2)` despite the plan requiring independent speed/course readers. A parameter-isolation RED test failed because `speed_reader` did not exist. The ledger now has separate speed/course contribution readers and separate benefit readers; the combined targeted result is `6 passed`.
+
+The most consequential newly confirmed defect was the formal loss graph: the model used `sum(losses.values())` and ignored all YAML loss weights. Several configured objectives existed only as helper functions and never entered training. The formal graph now:
+
+- computes `GT-global` residual targets with stop-gradient;
+- derives factor benefit targets from actual detached leave-one-factor-out improvement;
+- uses non-degradation hinge and target-delta matching;
+- derives deterministic pattern and 13-factor supervision from predicate trajectories;
+- aligns explanation attention with actual signed contribution magnitude;
+- records raw and weighted loss components;
+- raises if any configured nonzero loss lacks a runtime value.
+
+Loss-contract RED result was `2 failed`; GREEN targeted suite was `9 passed, 2 warnings`.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 findings from final gate push
+
+The remaining blockers before this pass were not simple "can run" issues. They were formal-functionality blockers:
+
+1. The trainer could not be trusted for a long formal run because checkpoint/resume did not preserve optimizer, scheduler, RNG, grad accumulation, or best-record state.
+2. ADAPT reference comparison in trainer-side bookkeeping could silently use zero/default references instead of real metric files.
+3. `gate_mechanism_fit_128` was still effectively a placeholder in preflight aggregation.
+4. The bounded mechanism-fit probe did not exist as a real training-evidence artifact.
+5. The throughput probe could waste time or OOM by running large candidates for a full measurement instead of aborting after warmup memory was already impossible.
+6. CRLF line endings on the remote worktree caused `git diff --check` to fail even though tests passed.
+
+Fixes and evidence:
+
+- Trainer state is now resumable and auditable. Checkpoints contain model, optimizer, scheduler, epoch/global/optimizer steps, accumulation setting, RNG state, best records, config, and signal codec. Atomic save prevents half-written checkpoint files.
+- New trainer runtime tests verify scheduler behavior, checkpoint content, atomic-save cleanup, and real ADAPT reference metric loading.
+- Real mechanism-fit probe now performs bounded optimization on 128 real samples and reports both improvement checks and collapse checks.
+- Mechanism fit passed:
+  - total_loss improved by `34.2348`;
+  - final speed loss improved by `7.9654`;
+  - final course loss improved by `9.4703`;
+  - action/explanation text losses improved;
+  - predicate_nnpu, pattern_semantic, traffic_state_semantic, and contribution_alignment improved rather than staying constant;
+  - collapse stats prove predicates, pattern, factors, flow contributions, benefit gates, and lateral course factors are not dead.
+- Throughput probe now selects batch settings from real evidence:
+  - batch 8 and 6 are rejected immediately after warmup because they exceed the 44 GiB reserved-memory cap;
+  - batch 4 is selected with grad accumulation 16, projected `1.14h/epoch`, peak reserved `36.0 GiB`;
+  - batch 3 and 2 pass but are slower.
+- Full WSL test suite now passes: `46 passed`.
+- Compile check passes.
+- Remote whitespace check passes after LF normalization.
+
+Important interpretation:
+
+- The method is now much closer to the formal DynFlow-Swin plan than in the earlier blocked state. The evidence is no longer just import smoke or synthetic tests; it includes real WSL BDD-X runtime, real mechanism fit, real ADAPT metric parity, real intervention/visual/nnPU runtime audits, and real throughput.
+- Training still must not start until clean GitHub provenance and review pass are regenerated on the exact committed SHA. The latest aggregated preflight blocks only `git_provenance.json` and `review_report.json`, which are process gates rather than missing mechanism-code gates.
+- If training starts, the efficient candidate is batch `4` with accumulation `16`. Trying to force batch `6` or `8` to use more VRAM would cross the memory cap and risks wasting the run.

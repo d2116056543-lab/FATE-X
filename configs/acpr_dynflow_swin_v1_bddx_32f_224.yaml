@@ -26,12 +26,17 @@ paths:
 
   video_swin_kinetics_checkpoint: models/video_swin_transformer/swin_base_patch244_window877_kinetics600_22k.pth
   bert_dir: models/captioning/bert-base-uncased
+  nnpu_rules: configs/acpr_dynflow_swin_text_rules.yaml
 
   oia_acpr_checkpoint: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/.background_runs/acpr_calalign_v1_2_resume_e15_17_sched28_20260616_125105/checkpoint_best_test_final_calibrated.pth
   oia_predicate_yaml: E:/sbw/FATE_Drive/fate_oia_acpr_calalign_v1_2_worktree/configs/acpr_scene_predicates.yaml
   oia_source_branch: acpr_calalign_v1_2
 
-  adapt_reference_checkpoint: REQUIRED_RESOLVE_FROM_CANONICAL_ADAPT_REPRO_RECORDS
+  adapt_reference_checkpoint: E:/sbw/ADAPT_repro/ADAPT/output/repro_single_gpu/adapt_full_b4a16_20260522_011638/checkpoint_best/model.bin
+  adapt_reference_prediction_tsv: E:/sbw/ADAPT_repro/ADAPT/output/repro_single_gpu/adapt_full_b4a16_20260522_011638/checkpoint-5-1280/pred.BDDX.testing_32frames.beam1.max15.tsv
+  adapt_reference_description_metrics: E:/sbw/ADAPT_repro/ADAPT/output/repro_single_gpu/adapt_full_b4a16_20260522_011638/checkpoint-5-1280/pred.BDDX_des.testing_32frames.beam1.max15.eval.json
+  adapt_reference_explanation_metrics: E:/sbw/ADAPT_repro/ADAPT/output/repro_single_gpu/adapt_full_b4a16_20260522_011638/checkpoint-5-1280/pred.BDDX_exp.testing_32frames.beam1.max15.eval.json
+  adapt_reference_caption_json: datasets/BDDX/testing_32frames_caption_coco_format.json
   output_root: E:/sbw/FATE_Drive/active_runs
   preflight_dir: .background_runs/acpr_dynflow_swin_v1_preflight
 
@@ -93,6 +98,7 @@ model:
     transfer_gate_init: 0.25
     trainable_dimension_mapper: true
     trainable_domain_residual: true
+    tensor_key: model.predicate_head.predicate_queries
 
   predicates:
     assignment: entmax15

@@ -791,3 +791,70 @@ ailed_reports=[].
 - Blocking audit remains failed because dynamic gate reports are not passed:
   - missing/non-passing model independence, direct-image/no-cache audit, ADAPT metric parity, signal contract, tensor contracts, Video Swin audit, OIA transfer, predicate/nnPU/CalAlign, semantic consolidation, traffic/reasoner/lag, query-motion, decision ledger, text decoder, gradient/loss/optimizer, real intervention, Canvas/Atlas, and foreground supervisor reports.
 - Because review pass is not authorized, formal training was not started.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 supervised implementation continuation
+
+- Reused the two same-strength independent reviewers from the prior gate review. Their latest status before this continuation was `CHANGES REQUIRED`; no training authorization exists.
+- Added and ran RED tests for pattern-to-factor connectivity, factor-specific lag behavior, BF16 mass conservation, independent speed/course readers, and YAML-weighted formal losses.
+- Pattern/mass RED command produced `3 failed, 1 passed`; failures were missing `pattern_fusion`, one-dimensional `lag_logits`, and BF16 conservation error `0.125`.
+- Implemented real dilation pattern fusion, causal per-factor lag, and FP32 conservation. GREEN: `4 passed`.
+- Ledger RED failed because `speed_reader` was absent. Added independent course/speed contribution and benefit readers. Combined GREEN: `6 passed`.
+- Loss-contract RED produced `2 failed` because weighting and target constructors did not exist.
+- Implemented strict weighted total plus formal target/loss wiring in `model.py` and `acpr_dynflow_swin_losses.py`.
+- Targeted verification:
+  `pytest test_formal_loss_contract.py test_model_nnpu_integration.py test_exact_ledger_identity.py test_pattern_lag_runtime.py test_mass_preserving_consolidation.py -q`
+  returned `9 passed, 2 warnings in 35.40s`.
+- Current worktree remains intentionally dirty while implementation continues. No review pass has been written and no formal training process has been launched.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 formal-gate completion pass
+
+- Continued the same strict-gate task from the DynFlow-Swin V1 plan. No new process MD files were created; this entry is appended to the existing ACPR_FlowCalPP progress ledger as requested.
+- Used the following workflow controls: executing written plan, TDD for new runtime functionality, verification-before-completion, and dual-agent-style coverage review. Because the current tool policy does not authorize spawning an independent same-strength reviewer unless the user explicitly requests a subagent in this turn, no formal `REVIEW_PASS` file has been written yet.
+- Added runtime trainer contract support in `fate_x/engine/train_acpr_dynflow_swin.py`:
+  - checkpoint state now includes model, optimizer, scheduler, epoch, global step, optimizer step, grad accumulation, RNG state, best records, signal codec, and config;
+  - checkpoint save is atomic via temp file and replace;
+  - resume restores optimizer/scheduler/model/RNG where present;
+  - BF16 autocast, TF32, cudnn benchmark, gradient accumulation, linear warmup/decay scheduler, and gradient clipping are wired into the training loop;
+  - ADAPT reference metrics are loaded from real JSON instead of hard-coded zeros.
+- Added TDD coverage for trainer runtime behavior in `tests/acpr_dynflow_swin/test_trainer_runtime_contract.py`.
+  - RED state: missing scheduler/state/checkpoint/reference metric helpers.
+  - GREEN evidence: targeted trainer tests passed, then full suite passed.
+- Implemented a real bounded mechanism-fit probe in `fate_x/engine/fit_acpr_dynflow_swin_mechanism.py`.
+  - Initial 128-sample implementation was too slow because it evaluated initial/train/final in separate passes.
+  - Refactored to a one-pass fit: first batches summarize initial loss, final batches summarize final loss, and last output is used for collapse checks.
+  - Fixed crash from local variable `output` shadowing the CLI output path.
+- Mechanism-fit evidence file: `.background_runs/acpr_dynflow_swin_v1_mechanism_fit_128_20260625_003.json`.
+  - status `pass`, sample_count `128`, optimizer_steps `32`.
+  - total_loss improved `52.0496 -> 17.8149`.
+  - final_speed_normalized improved `13.7254 -> 5.7600`.
+  - final_course_normalized improved `12.4296 -> 2.9592`.
+  - action_text improved `3.0980 -> 0.9697`.
+  - explanation_text improved `2.7121 -> 1.2548`.
+  - predicate_nnpu improved `0.0557698 -> 0.0556530`.
+  - pattern_semantic, traffic_state_semantic, and contribution_alignment also improved.
+  - collapse checks all passed: predicates not identical, pattern not constant, factors not constant, flow contributions nonzero, benefit gates nonzero, course uses lateral factors.
+- Reworked `run_acpr_dynflow_swin_preflight.py` to ingest the real mechanism-fit report instead of emitting a blocked placeholder for `gate_mechanism_fit_128.json`.
+- Reworked the real throughput probe:
+  - added candidate batch sweep;
+  - added warmup memory hard-cap abort so OOM-sized candidates stop before 100 measured steps;
+  - added partial output writing per candidate to avoid losing evidence on timeout;
+  - added tests for candidate filtering and warmup abort behavior.
+- Formal throughput evidence file: `.background_runs/acpr_dynflow_swin_v1_throughput_formal_20260625_002.json`.
+  - selected candidate: batch_size `4`, gradient_accumulation_steps `16`.
+  - measured_steps `100`, optimizer_steps `6`.
+  - samples_per_second `3.9943`.
+  - projected_train_epoch_hours `1.13995`, below the user hard limit of two hours.
+  - peak_allocated `31.91 GiB`, peak_reserved `35.996 GiB`.
+  - data_time_fraction `0.00926`, so bottleneck is compute, not repeated dataloader loading.
+  - batch 8 was aborted after warmup at `56.05 GiB reserved`; batch 6 was aborted at `47.64 GiB reserved`; both exceed the configured 44 GiB hard cap.
+  - batch 3 and batch 2 also passed but were slower, so batch 4 is the selected efficient training setting.
+- Fresh verification:
+  - `pytest tests/acpr_dynflow_swin -q` on remote WSL returned `46 passed, 5 warnings in 78.71s`.
+  - `python -m compileall -q fate_x src` on remote WSL returned exit 0.
+  - remote `git diff --check` initially failed due CRLF/trailing-whitespace normalization issues; files were normalized to LF on the remote worktree and `git diff --check` then returned exit 0.
+- Aggregated preflight after real mechanism-fit and formal throughput:
+  - output: `.background_runs/acpr_dynflow_swin_v1_preflight_20260625_agg_004/preflight_summary.json`.
+  - status `blocked`, passed `false`.
+  - only blocked reports are `git_provenance.json` and `review_report.json`.
+  - Interpretation: the dynamic mechanism reports now pass, but formal launch remains blocked until the current code/docs are committed, pushed, clean-SHA provenance is regenerated, and a review pass bound to that SHA is produced.
+- Training status: not launched. Starting before clean SHA and review pass would violate the formal plan even though runtime functionality and throughput are now in usable shape.

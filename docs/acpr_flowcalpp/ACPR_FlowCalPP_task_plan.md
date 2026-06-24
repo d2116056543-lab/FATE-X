@@ -694,3 +694,84 @@ Next required engineering work before any launch:
 3. Prove ADAPT metric parity and autoregressive evaluation.
 4. Implement real intervention recompute and Canvas/Atlas evidence.
 5. Re-run preflight/audit on a clean pushed SHA and only then launch training.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 strict completion continuation
+
+Formal training remains blocked. The current execution order is:
+
+1. complete every formal computation path with TDD;
+2. replace placeholder preflight reports with executable evidence;
+3. commit and push a clean SHA;
+4. rerun all WSL/CUDA gates on that exact SHA;
+5. obtain independent Agent B approval and a SHA-bound review pass;
+6. rerun the real throughput candidate sweep and enforce the user limit of at most two hours per train epoch;
+7. only then launch the 16-epoch formal run.
+
+Completed in this continuation:
+
+- real dilation-1/2/4 pattern branches now feed factor tokens;
+- response lag is factor-specific `[13,4]`, causal, normalized, and changes aligned factor tokens;
+- semantic-token conservation arithmetic is FP32 even under BF16 model execution;
+- speed and course factor/benefit readers are independent modules;
+- the formal loss graph consumes YAML weights exactly once and rejects missing configured nonzero losses;
+- residual, benefit, non-degradation, target-delta, pattern, traffic, transfer-anchor, alignment, sparsity, and smoothness objectives now enter the formal total loss.
+
+Still blocking:
+
+- full dynamic preflight orchestration and all required reports;
+- real 8-step direct-image smoke with checkpoint and actual text/control evaluation;
+- bounded 128-sample mechanism-fit evidence;
+- complete intervention suite and full visual evidence;
+- optimizer/scheduler/resume and throughput candidate-sweep proof;
+- clean-SHA independent review pass.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 launch gate update
+
+Current decision: **do not launch training yet**.
+
+The implementation is no longer blocked by the earlier mechanism placeholders, but formal launch still requires clean provenance and review pass.
+
+Completed since the previous task-plan entry:
+
+1. Trainer runtime state:
+   - implemented optimizer/scheduler/RNG/step/best-record checkpoint state;
+   - implemented atomic checkpoint save;
+   - implemented resume loading;
+   - implemented BF16/TF32/grad accumulation/clip/warmup-linear scheduler wiring;
+   - verified with trainer runtime tests.
+2. Mechanism-fit gate:
+   - implemented `fate_x.engine.fit_acpr_dynflow_swin_mechanism`;
+   - dynamic 128-sample fit passed;
+   - no required loss stayed dead or constant;
+   - collapse checks passed.
+3. Preflight aggregation:
+   - `run_acpr_dynflow_swin_preflight.py` now consumes real mechanism-fit report;
+   - placeholder `gate_mechanism_fit_128` is no longer the blocker.
+4. Throughput gate:
+   - candidate sweep now supports warmup memory abort;
+   - batch 8 and batch 6 are rejected before wasting full measurement;
+   - selected config is batch `4`, gradient accumulation `16`;
+   - projected train epoch is `1.14h`, under the user limit of two hours.
+5. Fresh verification:
+   - remote WSL `pytest tests/acpr_dynflow_swin -q`: `46 passed`;
+   - remote WSL `compileall -q fate_x src`: passed;
+   - remote `git diff --check`: passed after LF normalization.
+
+Remaining launch steps:
+
+1. Sync the updated three ACPR_FlowCalPP MD records to the remote worktree.
+2. Commit all implementation, test, config, and documentation changes.
+3. Push branch `acpr_dynflow_v1` to GitHub.
+4. Regenerate canonical preflight on the exact clean pushed SHA.
+5. Produce or obtain the formal review pass bound to that clean SHA.
+6. Only if the regenerated preflight passes and review pass exists, launch training with:
+   - batch_size `4`;
+   - gradient_accumulation_steps `16`;
+   - BF16 enabled;
+   - real BDD-X direct-image data;
+   - no synthetic flag;
+   - foreground/supervised execution unless the formal plan is explicitly overridden.
+
+Blocking note:
+
+- The current tool policy does not allow creating an independent same-strength subagent unless explicitly requested in the current turn. Therefore an actual independent review pass cannot be honestly claimed from this main session alone. If the user wants the formal `REVIEW_PASS` generated, the next instruction must explicitly authorize an independent reviewer/subagent or explicitly override that formal gate.

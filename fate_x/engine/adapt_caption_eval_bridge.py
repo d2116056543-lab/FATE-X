@@ -104,7 +104,7 @@ class _TemporaryEvalEnvironment:
 
 
 class _WindowsSpiceNativeRuntime:
-    """Make ADAPT SPICE load its bundled LMDB JNI library on Windows."""
+    """Make ADAPT SPICE load its bundled LMDB JNI library on Windows or Linux."""
 
     def __init__(self, output_dir: Path) -> None:
         self.output_dir = output_dir
@@ -115,15 +115,13 @@ class _WindowsSpiceNativeRuntime:
         self._old_check_call = None
         self._old_cache_dir = None
         self._old_temp_dir = None
-        if os.name != "nt":
-            return
         try:
             from src.evalcap.coco_caption.pycocoevalcap.spice import spice as spice_module
         except Exception:
             return
         spice_dir = Path(spice_module.__file__).resolve().parent
         lib_dir = spice_dir / "lib"
-        self._prepare_lmdb_dll(lib_dir)
+        self._prepare_lmdb_native(lib_dir)
         os.environ["PATH"] = f"{lib_dir}{os.pathsep}{os.environ.get('PATH', '')}"
         self._spice_module = spice_module
         self._old_cache_dir = getattr(spice_module, "CACHE_DIR", None)
@@ -163,16 +161,22 @@ class _WindowsSpiceNativeRuntime:
         return self.output_dir / "spice_cache"
 
     @staticmethod
-    def _prepare_lmdb_dll(lib_dir: Path) -> None:
-        jar_path = lib_dir / "lmdbjni-win64-0.4.6.jar"
+    def _prepare_lmdb_native(lib_dir: Path) -> None:
+        if os.name == "nt":
+            jar_path = lib_dir / "lmdbjni-win64-0.4.6.jar"
+            archive_member = "META-INF/native/windows64/lmdbjni.dll"
+            names = ("lmdbjni.dll", "lmdbjni64-0.4.6.dll", "lmdbjni-0.4.6.dll")
+        else:
+            jar_path = lib_dir / "lmdbjni-linux64-0.4.6.jar"
+            archive_member = "META-INF/native/linux64/liblmdbjni.so"
+            names = ("liblmdbjni.so", "liblmdbjni64-0.4.6.so", "liblmdbjni-0.4.6.so")
         if not jar_path.exists():
             return
-        dll_names = ("lmdbjni.dll", "lmdbjni64-0.4.6.dll", "lmdbjni-0.4.6.dll")
-        existing = [lib_dir / name for name in dll_names]
+        existing = [lib_dir / name for name in names]
         if all(path.exists() for path in existing):
             return
         with zipfile.ZipFile(jar_path) as jar:
-            data = jar.read("META-INF/native/windows64/lmdbjni.dll")
+            data = jar.read(archive_member)
         for path in existing:
             if not path.exists():
                 path.write_bytes(data)

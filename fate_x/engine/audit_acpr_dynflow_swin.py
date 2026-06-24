@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
+import os
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +91,92 @@ def _read(path: str) -> str:
 def _contains_any(path: str, patterns: tuple[str, ...]) -> bool:
     text = _read(path).lower()
     return any(pattern.lower() in text for pattern in patterns)
+
+
+def _windows_gitdir_to_wsl(path_text: str) -> str:
+    text = path_text.strip().replace("\\", "/")
+    if len(text) > 2 and text[1:3] == ":/":
+        return f"/mnt/{text[0].lower()}/{text[3:]}"
+    return text
+
+
+def _git(args: list[str]) -> str:
+    try:
+        return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        git_file = Path(".git")
+        if not git_file.is_file():
+            raise
+        text = git_file.read_text(encoding="utf-8").strip()
+        if not text.lower().startswith("gitdir:"):
+            raise
+        env = os.environ.copy()
+        env["GIT_DIR"] = _windows_gitdir_to_wsl(text.split(":", 1)[1])
+        env["GIT_WORK_TREE"] = str(Path.cwd())
+        return subprocess.check_output(["git", *args], text=True, env=env, stderr=subprocess.DEVNULL).strip()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_review_pass(path: str | Path, expected_head: str) -> dict[str, Any]:
+    blockers: list[str] = []
+    review_path = Path(path)
+    try:
+        payload = json.loads(review_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"passed": False, "blockers": ["invalid_review_pass"], "payload": {}}
+    if payload.get("authorization") != "ACPR_DYNFLOW_SWIN_V1_IMPLEMENTATION_REVIEW_PASS":
+        blockers.append("authorization_missing")
+    if not str(payload.get("reviewer", "")).strip():
+        blockers.append("reviewer_missing")
+    if payload.get("local_head") != expected_head or payload.get("github_head") != expected_head:
+        blockers.append("sha_mismatch")
+    if payload.get("clean") is not True:
+        blockers.append("worktree_not_clean")
+    if payload.get("all_reports_passed") is not True:
+        blockers.append("reports_not_passed")
+    return {"passed": not blockers, "blockers": blockers, "payload": payload}
+
+
+def write_review_pass(output_dir: str | Path, reviewer: str) -> Path:
+    if not reviewer.strip():
+        raise ValueError("independent reviewer identity is required")
+    root = Path(output_dir)
+    reports = {}
+    for name in REQUIRED_REPORTS:
+        path = root / name
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        passed = payload.get("passed", payload.get("pass")) is True
+        status = payload.get("status", payload.get("review_status"))
+        if not passed and status not in {"pass", "passed"}:
+            raise RuntimeError(f"cannot authorize review pass: {name} is not passed")
+        reports[name] = _sha256(path)
+    local_head = _git(["rev-parse", "HEAD"])
+    github_head = _git(["ls-remote", "github", "refs/heads/acpr_dynflow_v1"]).split()[0]
+    status = _git(["status", "--porcelain"])
+    if status or local_head != github_head:
+        raise RuntimeError("cannot authorize review pass: clean local/GitHub SHA gate failed")
+    payload = {
+        "authorization": "ACPR_DYNFLOW_SWIN_V1_IMPLEMENTATION_REVIEW_PASS",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "reviewer": reviewer,
+        "worktree": str(Path.cwd().resolve()),
+        "branch": _git(["branch", "--show-current"]),
+        "local_head": local_head,
+        "github_head": github_head,
+        "clean": True,
+        "all_reports_passed": True,
+        "report_sha256": reports,
+    }
+    path = root / "REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 def run_blocking_audit(
@@ -175,11 +265,15 @@ def main() -> None:
     parser.add_argument("--config", default="configs/acpr_dynflow_swin_v1_bddx_32f_224.yaml")
     parser.add_argument("--package", default="fate_x/acpr_dynflow_swin")
     parser.add_argument("--output_dir", default=".background_runs/acpr_dynflow_swin_v1_preflight")
+    parser.add_argument("--write_review_pass", action="store_true")
+    parser.add_argument("--reviewer", default="")
     args = parser.parse_args()
     result = run_blocking_audit(args.config, args.output_dir, args.package)
     print(json.dumps(result, indent=2))
     if not result["passed"]:
         raise SystemExit(1)
+    if args.write_review_pass:
+        print(write_review_pass(args.output_dir, args.reviewer))
 
 
 if __name__ == "__main__":

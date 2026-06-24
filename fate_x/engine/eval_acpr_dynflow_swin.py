@@ -145,18 +145,22 @@ def evaluate(
     with torch.no_grad():
         for batch in loader:
             batch = move_batch_to_device(batch, torch.device(device))
-            out = model(batch)
+            out = model(batch, generate_text=True)
             preds.append(out.ledger.final_prediction_raw.detach().cpu())
             if batch.control_target is not None:
                 targets.append(batch.control_target.detach().cpu())
-            action_ids = out.text.action_logits.argmax(dim=-1).detach().cpu().tolist()
-            explanation_ids = out.text.explanation_logits.argmax(dim=-1).detach().cpu().tolist()
-            for sample_id, description_ids, explanation_ids_for_sample in zip(batch.sample_ids, action_ids, explanation_ids):
+            if out.text.generated_action is None or out.text.generated_explanation is None:
+                raise RuntimeError("formal evaluation requires autoregressive generated text")
+            for sample_id, description, explanation in zip(
+                batch.sample_ids,
+                out.text.generated_action,
+                out.text.generated_explanation,
+            ):
                 prediction_rows.append(
                     {
                         "img_key": str(sample_id),
-                        "description": _decode_ids(tokenizer, description_ids),
-                        "explanation": _decode_ids(tokenizer, explanation_ids_for_sample),
+                        "description": description,
+                        "explanation": explanation,
                     }
                 )
 
