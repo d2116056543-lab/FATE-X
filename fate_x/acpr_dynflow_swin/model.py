@@ -24,10 +24,12 @@ class ACPRDynFlowSwinModel(nn.Module):
     def __init__(self, cfg: dict[str, Any] | None = None):
         super().__init__()
         self.cfg = cfg or {}
-        predicate_dim = _dim(self.cfg, "predicate", 64)
+        predicate_dim = _dim(self.cfg, "predicate", 256)
         text_dim = _dim(self.cfg, "text", 768)
-        motion_dim = _dim(self.cfg, "motion", text_dim)
-        self.backbone = ACPRDynFlowSwinBackbone(out_dim=predicate_dim)
+        motion_dim = _dim(self.cfg, "motion", 768)
+        self.backbone = ACPRDynFlowSwinBackbone(self.cfg)
+        self.predicate_input_proj = nn.LazyLinear(predicate_dim)
+        self.final_input_proj = nn.LazyLinear(predicate_dim)
         self.predicates = DynamicPredicateFieldBuilder(dim=predicate_dim)
         self.consolidator = SemanticTokenConsolidator(input_dim=predicate_dim, output_dim=motion_dim)
         self.traffic = PatternLagTrafficReasoner(predicate_dim=predicate_dim, factor_dim=motion_dim)
@@ -39,8 +41,10 @@ class ACPRDynFlowSwinModel(nn.Module):
 
     def forward(self, batch: DynFlowSwinBatch) -> ACPRDynFlowSwinOutput:
         bb = self.backbone(batch.frames)
-        pred = self.predicates(bb.predicate_grid)
-        sem = self.consolidator(bb.dense_final_tokens.reshape(batch.frames.shape[0], 32, 49, -1)[:, ::2])
+        predicate_grid = self.predicate_input_proj(bb.predicate_grid)
+        final_tokens = self.final_input_proj(bb.dense_final_tokens).reshape(batch.frames.shape[0], 32, 49, -1)
+        pred = self.predicates(predicate_grid)
+        sem = self.consolidator(final_tokens[:, ::2])
         traffic = self.traffic(pred.tokens, pred.evidence_maps, pred.corridor_mass, target_steps=32)
         motion = self.motion(self.global_to_motion(bb.temporal_global), sem.tokens)
         ledger = self.ledger(motion.global_prediction_normalized, traffic.lag_aligned_tokens)

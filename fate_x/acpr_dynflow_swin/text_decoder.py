@@ -5,6 +5,8 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 from typing import Optional
 
+from src.layers.bert import BertForImageCaptioning
+
 from .types import DynFlowSwinTextOutput
 
 
@@ -38,12 +40,39 @@ def _binary_masked_ce(sequence_logits: Tensor, labels: Tensor, mask: Tensor, off
 
 
 class DynFlowSwinTextDecoder(nn.Module):
-    def __init__(self, hidden_dim: int = 768, vocab_size: int = 30522, factor_dim: int = 256):
+    def __init__(
+        self,
+        hidden_dim: int = 768,
+        vocab_size: int = 30522,
+        factor_dim: int = 256,
+        bert_captioner: BertForImageCaptioning | None = None,
+    ):
         super().__init__()
+        self.bert_captioner = bert_captioner
         self.token_embed = nn.Embedding(vocab_size, hidden_dim)
         self.factor_proj = nn.Linear(factor_dim, hidden_dim)
         self.lm_head = nn.Linear(hidden_dim, vocab_size)
         self.factor_attention = nn.Linear(hidden_dim, 13)
+
+    def generate(
+        self,
+        img_feats: Tensor,
+        attention_mask: Tensor,
+        masked_pos: Tensor,
+        token_type_ids: Tensor,
+        use_sep_cap: bool = True,
+        max_length: int = 30,
+    ) -> Tensor:
+        if self.bert_captioner is None:
+            raise RuntimeError("ADAPT BertForImageCaptioning generation requires bert_captioner")
+        return self.bert_captioner.generate(
+            img_feats=img_feats,
+            attention_mask=attention_mask,
+            masked_pos=masked_pos,
+            token_type_ids=token_type_ids,
+            max_length=max_length,
+            use_sep_cap=use_sep_cap,
+        )
 
     def forward(
         self,
@@ -81,6 +110,6 @@ class DynFlowSwinTextDecoder(nn.Module):
             explanation_logits=logits[:, 15:30],
             action_to_factor_attention=attn[:, :15].mean(dim=1),
             explanation_to_factor_attention=attn[:, 15:30].mean(dim=1),
-            generated_action=None,
-            generated_explanation=None,
+            generated_action=[],
+            generated_explanation=[],
         )

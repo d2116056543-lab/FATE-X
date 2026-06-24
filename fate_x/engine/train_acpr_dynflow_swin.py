@@ -11,6 +11,7 @@ from fate_x.acpr_dynflow_swin.config import load_config
 from fate_x.acpr_dynflow_swin.model import ACPRDynFlowSwinModel
 from fate_x.acpr_dynflow_swin.types import DynFlowSwinBatch
 from fate_x.engine.acpr_dynflow_swin_data import build_dynflow_swin_dataloader
+from fate_x.engine.eval_acpr_dynflow_swin import evaluate, select_best_records
 
 
 def build_optimizer_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
@@ -81,6 +82,7 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--smoke_steps", type=int, default=0)
+    parser.add_argument("--eval_max_samples", type=int, default=-1)
     args = parser.parse_args()
     cfg = load_config(args.config)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -99,7 +101,8 @@ def main() -> None:
         max_samples=args.max_train_samples,
         synthetic=args.synthetic,
     )
-    best_loss = float("inf")
+    eval_records: list[dict] = []
+    adapt_reference = {"CIDEr_sum": 0.0, "speed_RMSE": 2.68, "course_RMSE": 5.87}
     for epoch in range(args.epochs):
         losses = []
         model.train()
@@ -107,7 +110,9 @@ def main() -> None:
             if args.max_steps is not None and step >= args.max_steps:
                 break
             batch = move_batch_to_device(batch, device)
-            out = model(batch)
+            use_bf16 = device.type == "cuda" and cfg.get("optimization", {}).get("precision") == "bf16"
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
+                out = model(batch)
             if not torch.isfinite(out.total_loss):
                 raise RuntimeError(f"non-finite total loss at epoch={epoch} step={step}")
             out.total_loss.backward()
@@ -139,12 +144,43 @@ def main() -> None:
         epoch_ckpt = output_dir / f"checkpoint_epoch_{epoch:03d}.pth"
         torch.save(ckpt, epoch_ckpt)
         replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_latest.pth")
-        if mean_loss < best_loss:
-            best_loss = mean_loss
+        eval_dir = output_dir / f"epoch_{epoch:03d}" / "full_test"
+        eval_metrics = evaluate(
+            config=args.config,
+            checkpoint=str(epoch_ckpt),
+            output_dir=str(eval_dir),
+            device=str(device),
+            max_samples=args.eval_max_samples,
+            synthetic=args.synthetic,
+        )
+        record = {"epoch": epoch, **eval_metrics}
+        eval_records.append(record)
+        (output_dir / "eval_records.jsonl").open("a", encoding="utf-8").write(json.dumps(record, ensure_ascii=False) + "\n")
+        best = select_best_records(eval_records, adapt_reference=adapt_reference)
+        if best["text"]["epoch"] == epoch:
             replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_best_text.pth")
+        if best["control"]["epoch"] == epoch:
             replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_best_control.pth")
-            replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_best_adapt_joint.pth")
-            print(f"dynflow_swin_best epoch={epoch} train_loss={mean_loss:.4f}", flush=True)
+        if best["joint"]["epoch"] == epoch:
+            replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_best_joint.pth")
+        if best["test"]["epoch"] == epoch:
+            replace_link_or_copy(epoch_ckpt, output_dir / "checkpoint_best_test.pth")
+        (output_dir / "best_records.json").write_text(json.dumps(best, indent=2), encoding="utf-8")
+        print(
+            "dynflow_swin_full test "
+            + json.dumps(
+                {
+                    "epoch": epoch,
+                    "CIDEr_description": eval_metrics.get("CIDEr_description"),
+                    "CIDEr_explanation": eval_metrics.get("CIDEr_explanation"),
+                    "speed_RMSE": eval_metrics.get("speed_RMSE"),
+                    "course_RMSE": eval_metrics.get("course_RMSE"),
+                    "best": {k: v.get("epoch") for k, v in best.items()},
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

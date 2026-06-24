@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import json
 from pathlib import Path
+from typing import Any
 
 
 FORBIDDEN = (
@@ -15,8 +16,46 @@ FORBIDDEN = (
     "fate_x.models.sinkhorn_transport",
 )
 
+REQUIRED_REPORTS = (
+    "git_provenance.json",
+    "formal_import_graph.json",
+    "config_binding_report.json",
+    "model_independence_audit.json",
+    "direct_image_no_cache_audit.json",
+    "adapt_metric_parity.json",
+    "signal_contract_audit.json",
+    "tensor_contracts.json",
+    "video_swin_backbone_audit.json",
+    "oia_transfer_audit.json",
+    "dynamic_predicate_audit.json",
+    "nnpu_calalign_audit.json",
+    "semantic_consolidation_audit.json",
+    "corridor_flow_audit.json",
+    "pattern_traffic_audit.json",
+    "response_lag_audit.json",
+    "query_motion_transformer_audit.json",
+    "decision_ledger_audit.json",
+    "text_decoder_audit.json",
+    "gradient_direction_audit.json",
+    "loss_audit.json",
+    "optimizer_precision_scheduler_audit.json",
+    "throughput_memory_probe.json",
+    "test_protocol_audit.json",
+    "best_selector_audit.json",
+    "gate_real_direct_image_smoke.json",
+    "gate_gradient_chain.json",
+    "gate_mechanism_fit_128.json",
+    "gate_identity_checks.json",
+    "gate_temporal_lag.json",
+    "intervention_audit.json",
+    "visual_artifact_index.json",
+    "foreground_supervisor_audit.json",
+    "implementation_manifest.json",
+    "review_report.json",
+)
 
-def audit_import_graph(package: str = "fate_x/acpr_dynflow_swin") -> dict:
+
+def audit_import_graph(package: str = "fate_x/acpr_dynflow_swin") -> dict[str, Any]:
     offenders = []
     for file in Path(package).rglob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"), filename=str(file))
@@ -33,21 +72,109 @@ def audit_import_graph(package: str = "fate_x/acpr_dynflow_swin") -> dict:
     return {"passed": not offenders, "offenders": offenders}
 
 
+def _blocker(code: str, message: str, path: str | None = None) -> dict[str, str]:
+    item = {"code": code, "message": message}
+    if path:
+        item["path"] = path
+    return item
+
+
+def _read(path: str) -> str:
+    p = Path(path)
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _contains_any(path: str, patterns: tuple[str, ...]) -> bool:
+    text = _read(path).lower()
+    return any(pattern.lower() in text for pattern in patterns)
+
+
+def run_blocking_audit(
+    config: str = "configs/acpr_dynflow_swin_v1_bddx_32f_224.yaml",
+    output_dir: str | None = ".background_runs/acpr_dynflow_swin_v1_preflight",
+    package: str = "fate_x/acpr_dynflow_swin",
+) -> dict[str, Any]:
+    blockers: list[dict[str, str]] = []
+    import_report = audit_import_graph(package)
+    if not import_report["passed"]:
+        blockers.append(_blocker("formal_import_graph_forbidden_import", "formal namespace imports a forbidden legacy module"))
+
+    if not Path("fate_x/acpr_dynflow_swin/signal_codec.py").exists():
+        blockers.append(_blocker("signal_codec_missing", "BDD-X signal codec file is missing"))
+
+    evaluator = _read("fate_x/engine/eval_acpr_dynflow_swin.py")
+    if "full evaluator requires dataset assets" in evaluator or "implemented as a library entrypoint" in evaluator:
+        blockers.append(_blocker("adapt_metric_parity_missing", "formal evaluator does not run exact ADAPT text/control metrics"))
+    if "run_adapt_sep_caption_eval" not in evaluator:
+        blockers.append(_blocker("adapt_metric_bridge_not_called", "ADAPT caption metric bridge is not called"))
+
+    preflight = _read("fate_x/engine/run_acpr_dynflow_swin_preflight.py")
+    if "smoke_batch" in preflight or "review pass requires full dynamic gates" in preflight:
+        blockers.append(_blocker("preflight_smoke_not_full_gates", "preflight still relies on a smoke batch instead of all blocking gates"))
+
+    trainer = _read("fate_x/engine/train_acpr_dynflow_swin.py")
+    if "evaluate(" not in trainer or "full test" not in trainer.lower():
+        blockers.append(_blocker("trainer_missing_per_epoch_full_test_eval", "trainer does not run full test text/control evaluation after every epoch"))
+    if "torch.autocast" not in trainer or "bfloat16" not in trainer:
+        blockers.append(_blocker("trainer_missing_bf16_runtime", "trainer does not prove BF16 autocast runtime"))
+    if "checkpoint_best_test.pth" not in trainer:
+        blockers.append(_blocker("trainer_missing_best_test_checkpoint", "trainer does not maintain checkpoint_best_test.pth"))
+
+    if _contains_any("fate_x/engine/export_acpr_dynflow_swin_visuals.py", ("requires a reviewed checkpoint",)):
+        blockers.append(_blocker("visual_export_scaffold_or_placeholder", "visual export script is still a scaffold"))
+    if _contains_any("fate_x/engine/build_acpr_dynflow_swin_atlas.py", ("requires reviewed visual artifacts",)):
+        blockers.append(_blocker("atlas_scaffold_or_placeholder", "atlas build script is still a scaffold"))
+    if _contains_any("fate_x/explain/acpr_dynflow_swin_renderer.py", ("1x1 png", "fallback", "json.dumps(case")):
+        blockers.append(_blocker("canvas_renderer_placeholder", "renderer is still template/dump based"))
+
+    if _contains_any("fate_x/engine/eval_adapt_reference_dynflow.py", ("comparison-only and never loaded",)):
+        blockers.append(_blocker("adapt_reference_eval_scaffold", "ADAPT reference evaluator is a scaffold"))
+
+    if output_dir:
+        root = Path(output_dir)
+        missing = [name for name in REQUIRED_REPORTS if not (root / name).exists()]
+        if missing:
+            blockers.append(_blocker("preflight_required_reports_missing", f"missing required preflight reports: {', '.join(missing[:8])}{'...' if len(missing) > 8 else ''}"))
+        else:
+            not_passed = []
+            for name in REQUIRED_REPORTS:
+                try:
+                    payload = json.loads((root / name).read_text(encoding="utf-8"))
+                except Exception:
+                    not_passed.append(name)
+                    continue
+                status = payload.get("status", payload.get("review_status"))
+                passed = payload.get("passed", payload.get("pass"))
+                if status not in {"pass", "passed"} and passed is not True:
+                    not_passed.append(name)
+            if not_passed:
+                blockers.append(_blocker("preflight_dynamic_gates_not_passed", f"preflight reports are present but not passed: {', '.join(not_passed[:8])}{'...' if len(not_passed) > 8 else ''}"))
+
+    report = {
+        "passed": not blockers,
+        "config": config,
+        "import_graph": import_report,
+        "blockers": blockers,
+        "review_pass_authorized": False,
+    }
+    if output_dir:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "formal_import_graph.json").write_text(json.dumps(import_report, indent=2), encoding="utf-8")
+        (out / "review_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        stale = out / "REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt"
+        if stale.exists() and blockers:
+            stale.unlink()
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=None)
+    parser.add_argument("--config", default="configs/acpr_dynflow_swin_v1_bddx_32f_224.yaml")
     parser.add_argument("--package", default="fate_x/acpr_dynflow_swin")
-    parser.add_argument("--output_dir", default=None)
+    parser.add_argument("--output_dir", default=".background_runs/acpr_dynflow_swin_v1_preflight")
     args = parser.parse_args()
-    result = audit_import_graph(args.package)
-    if args.config is not None:
-        result["config"] = args.config
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "audit_summary.json").write_text(
-            json.dumps(result, indent=2), encoding="utf-8"
-        )
+    result = run_blocking_audit(args.config, args.output_dir, args.package)
     print(json.dumps(result, indent=2))
     if not result["passed"]:
         raise SystemExit(1)
