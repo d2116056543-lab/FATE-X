@@ -573,3 +573,8 @@ Do not continue this training run. Before another full run:
 - Previous training entry was functionally incomplete because it trained only synthetic smoke batches. This has been corrected by adding a formal BDD-X dataloader adapter dedicated to `acpr_dynflow_swin`.
 - Root cause of real-loader text loss crash: ADAPT dataloader's `masked_pos` and `masked_ids` have different shapes by design. Treating `masked_pos` as a position list caused shape mismatch. The decoder now supports both legacy test binary masks and ADAPT real binary-mask-plus-padded-label format.
 - Real loader has only run a 1-batch CPU smoke so far. This proves data connectivity and batch contract, not model quality or throughput.
+
+
+## 2026-06-24 20:40:00 - Throughput gate finding
+- The previous throughput probe measured synthetic data only. It has been corrected to support real BDD-X dataloader measurement.
+- Real CPU measurement is far over the 4h projected epoch limit, so formal training still requires a GPU/WSL throughput run before review-pass approval.

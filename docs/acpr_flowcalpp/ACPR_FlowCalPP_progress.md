@@ -740,3 +740,10 @@ Generated: 2026-06-23 00:12:56
 - Real dataloader smoke completed one BDD-X batch from `datasets_part/BDDX/training_32frames.yaml`.
 - Real smoke metrics: `synthetic=false`, `epoch=0`, `steps=1`, `train_loss=30.88275718688965`, `device=cpu`.
 - Fixed ADAPT masked language modeling alignment: real loader emits `masked_pos [B,30]` binary mask and `masked_ids [B,45]`; decoder now maps binary sequence masks to padded masked-token labels per sample.
+
+
+## 2026-06-24 20:40:00 - ACPR DynFlow Swin V1 throughput probe update
+- Reworked `fate_x.engine.probe_acpr_dynflow_swin_throughput` to use the real BDD-X dataloader unless `--synthetic` is explicitly set.
+- Synthetic 1-step CPU probe passed: `samples_per_second=0.8721`, `formal_gate_passed=true`; this is smoke only.
+- Real BDD-X 1-step CPU probe ran through dataloader and model: `samples_per_second=0.0361`, `projected_epoch_hours=126.12`, `formal_gate_passed=false`.
+- This CPU result is not a formal blocker for GPU training, but it proves the gate now measures real data and will block unsuitable launches instead of rubber-stamping a synthetic probe.

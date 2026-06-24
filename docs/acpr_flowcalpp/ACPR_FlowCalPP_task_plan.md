@@ -631,3 +631,8 @@ ohup, or detached runners.
 - Remaining: run GPU throughput probe on real dataloader; enforce projected epoch <= 4h before formal training.
 - Remaining: expand evaluator from scaffold metrics to full ADAPT legal text/control metrics on test split.
 - Remaining: create review pass file only after real-data preflight, throughput, evaluation, checkpoint reload, and visual/faithfulness smoke all pass.
+
+
+## 2026-06-24 20:40:00 - Remaining formal training gate
+- Run `python -m fate_x.engine.probe_acpr_dynflow_swin_throughput` on the intended GPU/WSL environment with real BDD-X data.
+- Do not create `REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt` until the real GPU probe passes the 4h projected epoch gate and evaluator smoke is upgraded beyond scaffold selection logic.
