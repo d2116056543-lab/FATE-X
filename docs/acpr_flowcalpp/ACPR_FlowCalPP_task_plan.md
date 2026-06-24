@@ -775,3 +775,10 @@ Remaining launch steps:
 Blocking note:
 
 - The current tool policy does not allow creating an independent same-strength subagent unless explicitly requested in the current turn. Therefore an actual independent review pass cannot be honestly claimed from this main session alone. If the user wants the formal `REVIEW_PASS` generated, the next instruction must explicitly authorize an independent reviewer/subagent or explicitly override that formal gate.
+
+Post-push gate update:
+
+- Code and docs were pushed to GitHub, and clean provenance was rechecked.
+- Canonical preflight now blocks only on `review_report.json`.
+- Required next action before launch: obtain an independent review pass or explicit user override of the formal independent-review gate.
+- No training is authorized until that is resolved, even though dynamic functionality gates and throughput are now passing.

@@ -858,3 +858,16 @@ ailed_reports=[].
   - only blocked reports are `git_provenance.json` and `review_report.json`.
   - Interpretation: the dynamic mechanism reports now pass, but formal launch remains blocked until the current code/docs are committed, pushed, clean-SHA provenance is regenerated, and a review pass bound to that SHA is produced.
 - Training status: not launched. Starting before clean SHA and review pass would violate the formal plan even though runtime functionality and throughput are now in usable shape.
+
+## 2026-06-25 ACPR-DynFlow-Swin V1 GitHub sync and clean-preflight status
+
+- Remote code was committed and pushed to GitHub branch `acpr_dynflow_v1`.
+- Commit SHA before this documentation follow-up: `c0249a87586d3c129fa46d6dc0ec7d23e92fe01a`.
+- GitHub remote verification showed the same SHA on `refs/heads/acpr_dynflow_v1`.
+- Canonical preflight was rerun after the clean push:
+  - command used `run_acpr_dynflow_swin_preflight` with runtime audit `20260625_006`, ADAPT parity `20260625_001`, formal throughput `20260625_002`, and mechanism fit `20260625_003`;
+  - output dir `.background_runs/acpr_dynflow_swin_v1_preflight`;
+  - result `blocked`;
+  - only remaining blocked report: `review_report.json`.
+- This means git provenance passed after the push; formal training is now blocked only by the independent review-pass requirement.
+- This documentation update itself requires one more commit/push and one more clean preflight rerun before any launch decision.
