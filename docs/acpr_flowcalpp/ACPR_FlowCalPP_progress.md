@@ -782,3 +782,12 @@ ailed_reports=[].
   - `samples_per_second=3.1587`, projected epoch `1.4415h`, under the user hard requirement of `<2h`.
   - Caveat: this probe does not yet include full formal candidate sweep/component timing/optimizer timing required by the plan, so it is useful but not sufficient for review pass.
 - Training remains blocked because ADAPT metric parity, OIA transfer dynamic evidence, nnPU/CalAlign dynamic evidence, intervention recompute, Canvas/Atlas, and full preflight review pass are still incomplete.
+
+
+## 2026-06-24 23:12:07 ACPR-DynFlow-Swin V1 clean-SHA gate result
+
+- Pushed code to GitHub branch `acpr_dynflow_v1` at SHA `835065fce8b302c47976a0cef614a85e10c0248a`.
+- Clean GitHub-synced preflight git provenance passed on that SHA.
+- Blocking audit remains failed because dynamic gate reports are not passed:
+  - missing/non-passing model independence, direct-image/no-cache audit, ADAPT metric parity, signal contract, tensor contracts, Video Swin audit, OIA transfer, predicate/nnPU/CalAlign, semantic consolidation, traffic/reasoner/lag, query-motion, decision ledger, text decoder, gradient/loss/optimizer, real intervention, Canvas/Atlas, and foreground supervisor reports.
+- Because review pass is not authorized, formal training was not started.

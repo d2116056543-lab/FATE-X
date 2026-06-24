@@ -597,3 +597,10 @@ ate_oia.engine.train_acpr_oia --test_only is consuming ~32GB GPU. Throughput/mem
 - Confirmed implementation gap: visual export/atlas/renderer are still blocked by `audit_acpr_dynflow_swin.py` unless real Canvas/Atlas evidence is present.
 - Real direct-image WSL/CUDA smoke now proves the formal path can run one real BDD-X batch through Video Swin-B and backward without shape crashes after the native-time/global-dim fixes.
 - Throughput is not currently the main blocker: the current measured batch=1 probe estimates `1.44h/epoch`; the main blockers are missing formal mechanisms and review-pass evidence.
+
+
+## 2026-06-24 23:12:07 ACPR-DynFlow-Swin V1 final blocker for this pass
+
+- The latest clean pushed SHA verifies that the repository state itself is synchronized, but the method is still not fully implemented according to the formal plan.
+- The completed part is important but limited: real WSL/CUDA direct-image path now runs one BDD-X batch through repository Video Swin-B with backward gradients and the current 100-step probe estimates `<2h/epoch`.
+- The uncompleted blockers are mechanism-level, not infrastructure-level. Training now would produce data from an incomplete method, especially because nnPU is zero, ADAPT metric parity is not proven, formal autoregressive decoder/eval parity is not proven, interventions are not proven to recompute earliest affected layers, and Canvas/Atlas evidence is absent.

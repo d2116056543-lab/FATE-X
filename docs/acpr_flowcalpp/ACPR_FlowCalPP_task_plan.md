@@ -675,3 +675,22 @@ Must still be completed before formal training may start:
 - Review pass file bound to the exact clean local/GitHub SHA.
 
 Training rule preserved: do not launch training until all required gates pass. If gates pass, only launch when projected epoch time remains below the user limit of two hours.
+
+
+## 2026-06-24 23:12:07 ACPR-DynFlow-Swin V1 launch decision
+
+Decision: **do not launch training**.
+
+Reason:
+
+- User gate `epoch time <= 2h` is currently plausible under the existing batch=1 100-step probe (`1.44h/epoch`), but formal review pass is absent.
+- The formal plan says training may start only after all blocking gates and review pass bind to the clean pushed SHA.
+- Current clean SHA `835065fce8b302c47976a0cef614a85e10c0248a` still has dynamic mechanism blockers, so launching would violate the plan.
+
+Next required engineering work before any launch:
+
+1. Replace placeholder preflight reports with executable dynamic gates.
+2. Implement nonzero nnPU/CalAlign evidence and loss.
+3. Prove ADAPT metric parity and autoregressive evaluation.
+4. Implement real intervention recompute and Canvas/Atlas evidence.
+5. Re-run preflight/audit on a clean pushed SHA and only then launch training.
