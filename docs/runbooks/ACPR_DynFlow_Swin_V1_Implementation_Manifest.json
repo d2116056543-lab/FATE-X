@@ -1,0 +1,33 @@
+{
+  "created_at_utc": "2026-06-24T11:35:01.078629+00:00",
+  "package": "ACPR-DynFlow-Swin V1 Codex implementation package",
+  "target_repository": "d2116056543-lab/FATE-X",
+  "target_branch": "acpr_dynflow_v1",
+  "target_worktree": "E:\\sbw\\FATE_Drive\\fate_x_acpr_dynflow_v1_worktree",
+  "expected_starting_head": "7da4f84d40beb6908b1f34f0b134709317d5a0e4",
+  "formal_epochs": 16,
+  "no_new_worktree": true,
+  "no_new_branch": true,
+  "files": {
+    "Codex_ACPR_DynFlow_Swin_V1_Implementation_Plan.md": {
+      "bytes": 50657,
+      "sha256": "d30a695282fcae5f947627341f59ce1bad4af17a4c080bd64df94e5a2c37a988"
+    },
+    "acpr-dynflow-swin-implementation-audit_SKILL.md": {
+      "bytes": 18226,
+      "sha256": "fe5acfd98002307229ff7f98c9cbe526f1d47dd5d906c64742cdcc1c60132b14"
+    },
+    "acpr_dynflow_swin_v1_bddx_32f_224.yaml": {
+      "bytes": 9432,
+      "sha256": "8a194620602c5c94ae2336fb1c86dee126f938658b97ccd5be1f0bf275b6ba96"
+    },
+    "ACPR_DynFlow_Swin_V1_File_Level_Checklist.md": {
+      "bytes": 5353,
+      "sha256": "c3e3c5e663119a957abc8710f640591abd71b96320f9d6ef71c7186c68a7de7e"
+    },
+    "Codex_ACPR_DynFlow_Swin_V1_Bootstrap_Prompt.txt": {
+      "bytes": 5476,
+      "sha256": "c726576a4a4aca405de5ae0565c772813eb81c8019893f47f5686d8772683ce8"
+    }
+  }
+}
