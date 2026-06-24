@@ -94,7 +94,8 @@ class myVideoSwin(torch.nn.Module):
     def forward(self, x, return_stages=False):
         if return_stages:
             if hasattr(self.backbone, "forward_multiscale"):
-                out = self.backbone.forward_multiscale(x)
+                requested = return_stages if isinstance(return_stages, (tuple, list)) else (2, 3)
+                out = self.backbone.forward_multiscale(x, return_stages=tuple(requested))
                 if isinstance(out, dict):
                     return (out.get("final_tokens", out.get("final")), *out.get("stages", []))
                 return out

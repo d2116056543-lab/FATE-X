@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Canonical ACPR FlowCalPP / FlowCal V2 Findings ledger.
 This file intentionally contains both the earlier V1/FlowCalPP record and the later V2 record.
 Restored and merged from git commit ccb0370 on 2026-06-23 00:32:59 Asia/Shanghai after the user requested one continuous three-file history.
@@ -558,3 +558,12 @@ Do not continue this training run. Before another full run:
 
 - Formal contract files were missing from the repo at start: runbook, manifest, audit skill, and config.
 - Existing legacy `fate_x.acpr_dynflow` contains known prohibited defects and cannot be used as the formal namespace.
+
+## 2026-06-24 20:24:20 - ACPR DynFlow Swin V1 issues found and fixed
+- The formal training entry initially only accepted --smoke_steps; it could not run with planned --output_dir, --epochs, --max_steps, or --device. Fixed by adding those CLI arguments plus epoch metrics and checkpoint saving.
+- Import audit initially printed to stdout only and did not write evidence files. Fixed by adding --output_dir and udit_summary.json; failed audit now exits non-zero.
+- Train smoke failed during checkpoint save because E: had only about 89 MB free after partial smoke ckpts; PyTorch failed writing checkpoint_best_control.pth. Root cause was disk space, not model/loss. Cleaned only the generated smoke directory and restored E: to about 1.92 GB free.
+- Checkpoint saving originally duplicated latest/best_text/best_control/best_joint copies. Fixed by saving one epoch checkpoint and creating same-drive hardlink aliases via os.link, with copy2 fallback.
+- The PowerShell foreground launcher used a ternary expression that can fail on Windows PowerShell 5.1. Fixed to build an explicit argument list.
+- Current limitation: the training entry still uses synthetic smoke batches unless a real dataloader is connected by the formal config path. This is recorded explicitly in metrics and remains a blocker for claiming full formal training readiness.
+

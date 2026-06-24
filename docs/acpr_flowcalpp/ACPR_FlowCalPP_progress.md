@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Canonical ACPR FlowCalPP / FlowCal V2 Progress ledger.
 This file intentionally contains both the earlier V1/FlowCalPP record and the later V2 record.
 Restored and merged from git commit ccb0370 on 2026-06-23 00:32:59 Asia/Shanghai after the user requested one continuous three-file history.
@@ -722,3 +722,13 @@ Generated: 2026-06-23 00:12:56
 - Installed formal runbook/config/manifest/audit skill from user package.
 - Verified current worktree and branch before code changes.
 - Formal implementation is not yet complete; training remains blocked until preflight review pass.
+
+## 2026-06-24 20:24:20 - ACPR DynFlow Swin V1 implementation verification update
+- Implemented formal `fate_x.acpr_dynflow_swin` namespace and engine/explain/loss modules from the 2026-06-24 plan package.
+- Added contract tests under `tests/acpr_dynflow_swin`; latest run: 8 passed in 5.29s.
+- Ran compileall -q fate_x src: passed.
+- Ran import/forbidden-module audit: passed=true, offenders=[], output now persists at .background_runs/acpr_dynflow_swin_v1_audit/audit_summary.json.
+- Ran preflight smoke: finite loss, `backbone_forward_count=1`, predicate_count=32, `traffic_factor_count=13`; outputs under .background_runs/acpr_dynflow_swin_v1_preflight_smoke.
+- Ran train smoke: epoch=0, 2 steps, losses 24.4145, 30.5352, mean 27.4748; metrics and checkpoint aliases were written.
+- Formal training remains intentionally not launched until review pass and real-data/full-throughput gates are complete.
+

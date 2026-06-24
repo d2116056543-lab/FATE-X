@@ -1,0 +1,8 @@
+regimes: [clear_open_flow, stable_following, dense_following, queue_congestion]
+phases: [forming, stable, releasing, oscillating]
+sources: [traffic_signal, lead_vehicle_group, merge_lane_constraint, turn_intersection, vulnerable_obstacle_conflict]
+patterns:
+  stable: {delta: near_zero}
+  forming: {delta: increasing}
+  releasing: {delta: decreasing}
+  oscillating: {delta: alternating}

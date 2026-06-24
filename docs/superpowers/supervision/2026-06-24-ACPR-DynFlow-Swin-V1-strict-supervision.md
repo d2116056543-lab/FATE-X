@@ -1,4 +1,4 @@
-# 双代理监督日志：ACPR-DynFlow-Swin V1 严格实现
+﻿# 双代理监督日志：ACPR-DynFlow-Swin V1 严格实现
 
 **日期：** 2026-06-24
 **任务：** 根据用户提供的 ACPR-DynFlow-Swin V1 计划、配置、manifest、file-level checklist 和 audit skill，在当前 `acpr_dynflow_v1` branch 上完整实现代码功能，不遗漏计划项。
@@ -87,3 +87,13 @@
 - 合同文件 commit/push/SHA equality。
 - 后续每批实现的 targeted tests、compileall、git diff --check。
 - 最终 preflight gate reports 和 review pass。
+
+## 2026-06-24 20:24:20 - Verification checkpoint
+- Pytest: `tests/acpr_dynflow_swin` -q -> 8 passed.
+- Compile: python -m compileall -q fate_x src -> passed.
+- Git diff check: passed.
+- Import audit: passed=true, no legacy ACPR/FlowTrace/TokenPMT/LogSinkhorn imports in formal package.
+- Preflight smoke: finite total loss, 32 predicate outputs, 13 traffic factors.
+- Train smoke: produced batch logs, metrics JSON, latest/best checkpoint aliases.
+- Supervisor note: no subagent was spawned because available tool metadata requires explicit user request for subagents; supervision was implemented as local matrix/log plus self-review evidence.
+

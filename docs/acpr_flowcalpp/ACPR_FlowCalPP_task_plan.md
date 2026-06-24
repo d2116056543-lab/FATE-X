@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Canonical ACPR FlowCalPP / FlowCal V2 Task Plan ledger.
 This file intentionally contains both the earlier V1/FlowCalPP record and the later V2 record.
 Restored and merged from git commit ccb0370 on 2026-06-23 00:32:59 Asia/Shanghai after the user requested one continuous three-file history.
@@ -616,3 +616,11 @@ The previous three-record set was too compressed for the amount of work done acr
 - Installed formal runbook/config/manifest/audit skill from user package.
 - Verified current worktree and branch before code changes.
 - Formal implementation is not yet complete; training remains blocked until preflight review pass.
+
+## 2026-06-24 20:24:20 - ACPR DynFlow Swin V1 remaining gates before formal training
+- Connect and verify the real BDD-X 32f image dataloader for python -m fate_x.engine.train_acpr_dynflow_swin; smoke batches are not acceptable for formal results.
+- Run the throughput probe on the real dataloader and enforce the plan gate: projected epoch time must not exceed 4h.
+- Generate the formal review pass file only after import graph, config binding, tensor contract, real-data smoke, checkpoint save/load, and throughput gates all pass.
+- Keep formal launch foreground-supervised only; no Start-Process, schtasks, 
+ohup, or detached runners.
+

@@ -1,0 +1,13 @@
+positive_rules:
+  traffic_light_red: ["red light", "traffic light is red"]
+  traffic_light_green: ["green light"]
+  lead_vehicle_braking: ["car ahead stops", "vehicle ahead braking", "cars ahead stopped"]
+  pedestrian_ahead: ["pedestrian crossing", "person crossing"]
+  open_road: ["road is clear", "open road"]
+reliable_negative_rules:
+  traffic_light_red: ["green light", "no red light"]
+  pedestrian_ahead: ["no pedestrian"]
+  queue_ahead: ["road is clear", "open road"]
+exclusion_rules:
+  left_lane_open: ["left lane blocked"]
+  right_lane_open: ["right lane blocked"]
