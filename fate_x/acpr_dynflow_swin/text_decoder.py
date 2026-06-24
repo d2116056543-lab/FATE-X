@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+from typing import Optional
 
 from .types import DynFlowSwinTextOutput
 
@@ -12,6 +13,28 @@ def _masked_ce(logits: Tensor, labels: Tensor, mask: Tensor) -> Tensor:
     if not bool(valid.any()):
         return logits.sum() * 0.0
     return F.cross_entropy(logits[valid], labels[valid].long())
+
+
+def _gather_masked_logits(sequence_logits: Tensor, masked_pos: Tensor) -> Tensor:
+    max_index = sequence_logits.shape[1] - 1
+    positions = masked_pos.long().clamp_min(0).clamp_max(max_index)
+    gather_index = positions.unsqueeze(-1).expand(-1, -1, sequence_logits.shape[-1])
+    return sequence_logits.gather(dim=1, index=gather_index)
+
+
+def _binary_masked_ce(sequence_logits: Tensor, labels: Tensor, mask: Tensor, offsets: Optional[Tensor] = None) -> Tensor:
+    losses = []
+    for batch_index in range(sequence_logits.shape[0]):
+        valid_positions = mask[batch_index].bool()
+        count = int(valid_positions.sum().detach().cpu())
+        if count <= 0:
+            continue
+        offset = int(offsets[batch_index].detach().cpu()) if offsets is not None else 0
+        target = labels[batch_index, offset : offset + count].long()
+        losses.append(F.cross_entropy(sequence_logits[batch_index, valid_positions], target))
+    if not losses:
+        return sequence_logits.sum() * 0.0
+    return torch.stack(losses).mean()
 
 
 class DynFlowSwinTextDecoder(nn.Module):
@@ -34,10 +57,21 @@ class DynFlowSwinTextDecoder(nn.Module):
         factor_context = self.factor_proj(factor_tokens.mean(dim=1))
         hidden = hidden + factor_context.mean(dim=1, keepdim=True)
         logits = self.lm_head(hidden)
-        action_mask = masked_pos.bool() & (torch.arange(input_ids.shape[1], device=input_ids.device).view(1, -1) < 15)
-        explanation_mask = masked_pos.bool() & ~action_mask
-        action_loss = _masked_ce(logits, masked_ids, action_mask)
-        explanation_loss = _masked_ce(logits, masked_ids, explanation_mask)
+        if masked_pos.shape[1] == input_ids.shape[1] and int(masked_pos.max().detach().cpu()) <= 1:
+            positions = torch.arange(input_ids.shape[1], device=input_ids.device).view(1, -1)
+            valid_mask = masked_pos.bool()
+            action_mask = valid_mask & positions.lt(15)
+            explanation_mask = valid_mask & positions.ge(15)
+            action_offsets = action_mask.sum(dim=1)
+            action_loss = _binary_masked_ce(logits, masked_ids, action_mask)
+            explanation_loss = _binary_masked_ce(logits, masked_ids, explanation_mask, offsets=action_offsets)
+        else:
+            masked_logits = _gather_masked_logits(logits, masked_pos)
+            valid_mask = masked_ids.ge(0)
+            action_mask = valid_mask & masked_pos.lt(15)
+            explanation_mask = valid_mask & masked_pos.ge(15)
+            action_loss = _masked_ce(masked_logits, masked_ids, action_mask)
+            explanation_loss = _masked_ce(masked_logits, masked_ids, explanation_mask)
         attn = torch.softmax(self.factor_attention(hidden), dim=-1)
         return DynFlowSwinTextOutput(
             total_mlm_loss=action_loss + explanation_loss,

@@ -567,3 +567,9 @@ Do not continue this training run. Before another full run:
 - The PowerShell foreground launcher used a ternary expression that can fail on Windows PowerShell 5.1. Fixed to build an explicit argument list.
 - Current limitation: the training entry still uses synthetic smoke batches unless a real dataloader is connected by the formal config path. This is recorded explicitly in metrics and remains a blocker for claiming full formal training readiness.
 
+
+
+## 2026-06-24 20:36:59 - Real loader integration findings
+- Previous training entry was functionally incomplete because it trained only synthetic smoke batches. This has been corrected by adding a formal BDD-X dataloader adapter dedicated to `acpr_dynflow_swin`.
+- Root cause of real-loader text loss crash: ADAPT dataloader's `masked_pos` and `masked_ids` have different shapes by design. Treating `masked_pos` as a position list caused shape mismatch. The decoder now supports both legacy test binary masks and ADAPT real binary-mask-plus-padded-label format.
+- Real loader has only run a 1-batch CPU smoke so far. This proves data connectivity and batch contract, not model quality or throughput.

@@ -732,3 +732,11 @@ Generated: 2026-06-23 00:12:56
 - Ran train smoke: epoch=0, 2 steps, losses 24.4145, 30.5352, mean 27.4748; metrics and checkpoint aliases were written.
 - Formal training remains intentionally not launched until review pass and real-data/full-throughput gates are complete.
 
+
+
+## 2026-06-24 20:36:59 - ACPR DynFlow Swin V1 real BDD-X loader verification
+- Reworked `fate_x.engine.acpr_dynflow_swin_data` so formal Swin training defaults to ADAPT-compatible real BDD-X TSV/YAML loading via `src.datasets.vl_dataloader.make_data_loader`.
+- `--synthetic` is now an explicit smoke-only flag; formal trainer no longer silently uses synthetic data by default.
+- Real dataloader smoke completed one BDD-X batch from `datasets_part/BDDX/training_32frames.yaml`.
+- Real smoke metrics: `synthetic=false`, `epoch=0`, `steps=1`, `train_loss=30.88275718688965`, `device=cpu`.
+- Fixed ADAPT masked language modeling alignment: real loader emits `masked_pos [B,30]` binary mask and `masked_ids [B,45]`; decoder now maps binary sequence masks to padded masked-token labels per sample.

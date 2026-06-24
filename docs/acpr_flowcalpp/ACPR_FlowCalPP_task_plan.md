@@ -624,3 +624,10 @@ The previous three-record set was too compressed for the amount of work done acr
 - Keep formal launch foreground-supervised only; no Start-Process, schtasks, 
 ohup, or detached runners.
 
+
+
+## 2026-06-24 20:36:59 - Updated formal readiness status
+- Completed: real BDD-X train loader reaches the formal Swin model for at least one batch.
+- Remaining: run GPU throughput probe on real dataloader; enforce projected epoch <= 4h before formal training.
+- Remaining: expand evaluator from scaffold metrics to full ADAPT legal text/control metrics on test split.
+- Remaining: create review pass file only after real-data preflight, throughput, evaluation, checkpoint reload, and visual/faithfulness smoke all pass.

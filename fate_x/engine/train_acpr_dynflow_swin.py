@@ -10,6 +10,7 @@ import torch
 from fate_x.acpr_dynflow_swin.config import load_config
 from fate_x.acpr_dynflow_swin.model import ACPRDynFlowSwinModel
 from fate_x.acpr_dynflow_swin.types import DynFlowSwinBatch
+from fate_x.engine.acpr_dynflow_swin_data import build_dynflow_swin_dataloader
 
 
 def build_optimizer_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
@@ -58,13 +59,27 @@ def replace_link_or_copy(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def move_batch_to_device(batch: DynFlowSwinBatch, device: torch.device) -> DynFlowSwinBatch:
+    batch.frames = batch.frames.to(device, non_blocking=True)
+    batch.input_ids = batch.input_ids.to(device, non_blocking=True)
+    batch.attention_mask = batch.attention_mask.to(device, non_blocking=True)
+    batch.token_type_ids = batch.token_type_ids.to(device, non_blocking=True)
+    batch.masked_pos = batch.masked_pos.to(device, non_blocking=True)
+    batch.masked_ids = batch.masked_ids.to(device, non_blocking=True)
+    batch.control_target = batch.control_target.to(device, non_blocking=True)
+    return batch
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/acpr_dynflow_swin_v1_bddx_32f_224.yaml")
     parser.add_argument("--output_dir", default=".background_runs/acpr_dynflow_swin_v1_train")
     parser.add_argument("--epochs", type=int, default=16)
     parser.add_argument("--max_steps", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--max_train_samples", type=int, default=-1)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--smoke_steps", type=int, default=0)
     args = parser.parse_args()
     cfg = load_config(args.config)
@@ -73,20 +88,25 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     model = ACPRDynFlowSwinModel(cfg).to(device)
     optimizer = torch.optim.AdamW(build_optimizer_groups(model, cfg))
-    steps_per_epoch = args.max_steps if args.max_steps is not None else max(args.smoke_steps, 1)
+    batch_size = args.batch_size or int(cfg.get("optimization", {}).get("batch_size", 1))
+    if args.smoke_steps > 0 and args.max_steps is None:
+        args.max_steps = args.smoke_steps
+        args.synthetic = True
+    loader = build_dynflow_swin_dataloader(
+        cfg,
+        split="train",
+        batch_size=batch_size,
+        max_samples=args.max_train_samples,
+        synthetic=args.synthetic,
+    )
     best_loss = float("inf")
     for epoch in range(args.epochs):
         losses = []
         model.train()
-        for step in range(steps_per_epoch):
-            batch = smoke_batch()
-            batch.frames = batch.frames.to(device)
-            batch.input_ids = batch.input_ids.to(device)
-            batch.attention_mask = batch.attention_mask.to(device)
-            batch.token_type_ids = batch.token_type_ids.to(device)
-            batch.masked_pos = batch.masked_pos.to(device)
-            batch.masked_ids = batch.masked_ids.to(device)
-            batch.control_target = batch.control_target.to(device)
+        for step, batch in enumerate(loader):
+            if args.max_steps is not None and step >= args.max_steps:
+                break
+            batch = move_batch_to_device(batch, device)
             out = model(batch)
             if not torch.isfinite(out.total_loss):
                 raise RuntimeError(f"non-finite total loss at epoch={epoch} step={step}")
@@ -95,14 +115,16 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             loss_value = float(out.total_loss.detach().cpu())
             losses.append(loss_value)
-            print(f"dynflow_swin_train epoch={epoch} step={step}/{steps_per_epoch} loss={loss_value:.4f}", flush=True)
+            total_steps = args.max_steps if args.max_steps is not None else len(loader)
+            print(f"dynflow_swin_train epoch={epoch} step={step}/{total_steps} loss={loss_value:.4f}", flush=True)
         mean_loss = sum(losses) / max(len(losses), 1)
         metrics = {
             "epoch": epoch,
             "train_loss": mean_loss,
-            "steps": steps_per_epoch,
+            "steps": len(losses),
             "device": str(device),
-            "note": "synthetic smoke data unless a real dataloader is connected by the formal config",
+            "synthetic": bool(args.synthetic),
+            "note": "formal trainer uses the real BDD-X dataloader unless --synthetic is set",
         }
         (output_dir / f"metrics_epoch_{epoch:03d}.json").write_text(
             json.dumps(metrics, indent=2), encoding="utf-8"
