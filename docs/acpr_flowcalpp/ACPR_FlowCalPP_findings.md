@@ -578,3 +578,22 @@ Do not continue this training run. Before another full run:
 ## 2026-06-24 20:40:00 - Throughput gate finding
 - The previous throughput probe measured synthetic data only. It has been corrected to support real BDD-X dataloader measurement.
 - Real CPU measurement is far over the 4h projected epoch limit, so formal training still requires a GPU/WSL throughput run before review-pass approval.
+
+## 2026-06-24 22:33:56 ACPR-DynFlow-Swin V1 gate findings
+- WSL distribution: ADAPT-Ubuntu exists and is WSL2.
+- WSL adapt env: /opt/conda/envs/adapt, Python 3.8.20, torch 1.13.1+cu117, CUDA available.
+- GPU: NVIDIA RTX 5880 Ada Generation, 49140 MiB total.
+- Current blocker: unrelated Windows process
+ate_oia.engine.train_acpr_oia --test_only is consuming ~32GB GPU. Throughput/memory gate cannot be trusted until this is stopped or finishes.
+- Current code audit state: branch has blocking audit; REVIEW_PASS is not authorized until dynamic reports pass.
+
+
+## 2026-06-24 23:06:02 ACPR-DynFlow-Swin V1 findings
+
+- The code is not yet plan-complete. Current static tests are not enough to authorize training because the formal plan requires dynamic evidence, not only import/shape tests.
+- Confirmed implementation gap: `ACPRDynFlowSwinModel.forward` still sets `predicate_nnpu` to zero loss (`pred.logits.mean().abs() * 0.0`). This violates the required nnPU/CalAlign dynamic semantics and must remain a blocker.
+- Confirmed implementation gap: `run_acpr_dynflow_swin_preflight.py` currently emits blocked placeholder reports for required dynamic reports instead of executing all gates.
+- Confirmed implementation gap: `eval_acpr_dynflow_swin.py` still uses argmax-style decoding for prediction rows; formal ADAPT-compatible autoregressive generation/parity is not yet proven.
+- Confirmed implementation gap: visual export/atlas/renderer are still blocked by `audit_acpr_dynflow_swin.py` unless real Canvas/Atlas evidence is present.
+- Real direct-image WSL/CUDA smoke now proves the formal path can run one real BDD-X batch through Video Swin-B and backward without shape crashes after the native-time/global-dim fixes.
+- Throughput is not currently the main blocker: the current measured batch=1 probe estimates `1.44h/epoch`; the main blockers are missing formal mechanisms and review-pass evidence.

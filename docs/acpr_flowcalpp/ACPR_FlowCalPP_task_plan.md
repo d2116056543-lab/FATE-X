@@ -542,7 +542,8 @@ The previous three-record set was too compressed for the amount of work done acr
 ### Scope covered by this unified record
 - ADAPT reproduction on BDD-X preprocessed 32-frame TSV data.
 - FlowTrace PMT V1 and ACPR FlowCalPP V1/V2 experiments layered on top of the ADAPT-style data path.
-- DynFlow V1 strict implementation package under ate_x/acpr_dynflow.
+- DynFlow V1 strict implementation package under
+ate_x/acpr_dynflow.
 - Training/evaluation contract decisions: ADAPT-style caption metrics, continuous control metrics, checkpoint selection, and forbidden discrete proxy evaluation.
 - Git synchronization and review-pass rules for d2116056543-lab/FATE-X branches.
 
@@ -550,7 +551,8 @@ The previous three-record set was too compressed for the amount of work done acr
 | Phase | Main branch/worktree | Intended goal | Actual status | Durable lesson |
 |---|---|---|---|---|
 | ADAPT reproduction | E:/sbw/ADAPT_repro/ADAPT | Establish a BDD-X reference run with paper-style caption/control metrics. | Usable baseline. Earlier reproduction reached much stronger text metrics than later ACPR V2 attempts. | Do not compare a new module to paper numbers before first comparing it against this local reproduction checkpoint/history. |
-| FlowTrace PMT V1 | ate_x_flowtrace_pmt_v1_worktree | Add traffic-flow/PMT mechanism while preserving ADAPT training semantics. | Required hard smoke limit fixes and strict doc package. | --max_steps alone was not a true training-loop cap; hard-stop plumbing must be verified from log lines. |
+| FlowTrace PMT V1 |
+ate_x_flowtrace_pmt_v1_worktree | Add traffic-flow/PMT mechanism while preserving ADAPT training semantics. | Required hard smoke limit fixes and strict doc package. | --max_steps alone was not a true training-loop cap; hard-stop plumbing must be verified from log lines. |
 | ACPR FlowCalPP V1 | FATE-X ACPR worktree family | Add traffic-flow-aware control/text outputs and ADAPT-aligned evaluation. | Added epoch-end eval/resume/best checkpoint logic. | Any ADAPT-aligned trainer must evaluate test split every epoch and update checkpoint from real metrics, not a placeholder. |
 | ACPR FlowCal V2 | cpr_flowcal_v2 path | Continue from a strong previous checkpoint and prove new modules improve it. | Failed to beat the previous ADAPT/ACPR baseline. Text stayed around CIDEr_des+exp=2.05-2.08; local ADAPT reproduction had stronger values. | New module schedules are not useful if resume/eval bridge cannot reproduce the starting checkpoint before training. |
 | DynFlow V1 package | E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree, branch cpr_dynflow_v1 | Implement a stricter direct-image ACPR-DynFlow path with Video Swin, BERT, OIA predicates, gradient-chain audit, and preflight gates. | Code implemented and preflight passed once at commit 8d4b7ca, but a later train/eval honesty patch is currently uncommitted and invalidates the previous review pass until re-run. | Review pass is tied to a Git SHA; any code or doc commit after a pass requires another final audit/pass. |
@@ -558,7 +560,9 @@ The previous three-record set was too compressed for the amount of work done acr
 ### Current DynFlow V1 implementation contract
 - Formal input must remain direct BDD-X frames [B,32,3,224,224]; no cached ADAPT features/logits as formal input.
 - Allowed initializers are generic BERT-base, Kinetics Video Swin, and the BDD-OIA ACPR-CalAlign predicate-query checkpoint.
-- ate_x.engine.train_acpr_dynflow and ate_x.engine.eval_acpr_dynflow are the official trainer/evaluator.
+-
+ate_x.engine.train_acpr_dynflow and
+ate_x.engine.eval_acpr_dynflow are the official trainer/evaluator.
 - Preflight and audit reports must pass before formal training; review pass must be regenerated after the latest commit.
 - Training must not silently use fake text scores or save checkpoint_best_text.pth from a placeholder.
 
@@ -580,10 +584,13 @@ The previous three-record set was too compressed for the amount of work done acr
 - Checked HEAD before recording: $head.
 - GitHub branch state before recording: $remote.
 - Final preflight/audit directory inspected: .background_runs/acpr_dynflow_v1_final_preflight_20260623_0515.
-- eview_report.json: passed=true, lockers=[], missing_reports=[], ailed_reports=[].
+-
+eview_report.json: passed=true, lockers=[], missing_reports=[],
+ailed_reports=[].
 - git_provenance.json: branch cpr_dynflow_v1, local HEAD equals GitHub HEAD, clean worktree.
 - oia_predicate_transfer_audit.json: oia_loaded=true, source model, source dim 384, checkpoint SHA 84d3744a7505cca19b33ac2b517b58d71c98fd580f162dec4a6eee2aee1f64b2.
-- gate_gradient_chain.json: passed=true, missing_components=[], missing_trainable_grad_params=0, rozen_params_with_grad=[].
+- gate_gradient_chain.json: passed=true, missing_components=[], missing_trainable_grad_params=0,
+rozen_params_with_grad=[].
 - Important: this documentation append changes Git HEAD after the 0515 pass. Therefore a new final preflight/audit must be run again after committing this section; the latest run directory, not this paragraph alone, is the binding proof.
 ## 2026-06-23 ACPR-DynFlow V1 训练停止与下一步计划修正
 
@@ -621,7 +628,7 @@ The previous three-record set was too compressed for the amount of work done acr
 - Connect and verify the real BDD-X 32f image dataloader for python -m fate_x.engine.train_acpr_dynflow_swin; smoke batches are not acceptable for formal results.
 - Run the throughput probe on the real dataloader and enforce the plan gate: projected epoch time must not exceed 4h.
 - Generate the formal review pass file only after import graph, config binding, tensor contract, real-data smoke, checkpoint save/load, and throughput gates all pass.
-- Keep formal launch foreground-supervised only; no Start-Process, schtasks, 
+- Keep formal launch foreground-supervised only; no Start-Process, schtasks,
 ohup, or detached runners.
 
 
@@ -636,3 +643,35 @@ ohup, or detached runners.
 ## 2026-06-24 20:40:00 - Remaining formal training gate
 - Run `python -m fate_x.engine.probe_acpr_dynflow_swin_throughput` on the intended GPU/WSL environment with real BDD-X data.
 - Do not create `REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt` until the real GPU probe passes the 4h projected epoch gate and evaluator smoke is upgraded beyond scaffold selection logic.
+
+## 2026-06-24 22:33:56 ACPR-DynFlow-Swin V1 strict gate plan update
+- 当前要求：不新建新 md；所有记录继续写入 ACPR_FlowCalPP 三份过程文档。
+- 训练启动条件：必须先通过 WSL/Linux CUDA direct-image smoke、ADAPT metric parity、OIA/nnPU/CalAlign/mass/intervention/Canvas/Atlas 动态 gate、100-step throughput；且 projected train epoch <= 2 hours。
+- 当前禁止：未过 gate 前不杀旧进程、不启动当前训练、不生成 REVIEW_PASS。
+
+
+## 2026-06-24 23:06:02 ACPR-DynFlow-Swin V1 updated task gate
+
+Current status: **blocked for formal training**.
+
+Completed in this session:
+
+- Fixed WSL git preflight provenance fallback for Windows gitdir paths.
+- Fixed blocking audit so missing output_dir cannot accidentally pass dynamic gate review.
+- Fixed formal model native final-stage reshape bug.
+- Fixed formal model Swin-final-to-motion dimension bug.
+- Verified real WSL/CUDA direct-image smoke passes one real BDD-X batch with nonzero gradients.
+- Ran 100-step real CUDA throughput probe; current estimate is `<2h/epoch` under the existing probe script.
+
+Must still be completed before formal training may start:
+
+- ADAPT metric parity using real ADAPT reference predictions/evaluator.
+- OIA predicate transfer dynamic evidence with checkpoint/key/SHA/order/gate report.
+- nnPU/CalAlign with real positive/reliable-negative/unlabeled counts and nonzero loss.
+- Mass conservation and exact ledger identity within required tolerance in dynamic gate reports.
+- Real intervention recompute from earliest affected layer, not display tensor masking.
+- Real Canvas/Atlas outputs bound to tensor evidence.
+- Full preflight reports all marked pass on a clean pushed SHA.
+- Review pass file bound to the exact clean local/GitHub SHA.
+
+Training rule preserved: do not launch training until all required gates pass. If gates pass, only launch when projected epoch time remains below the user limit of two hours.

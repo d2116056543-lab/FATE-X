@@ -149,6 +149,8 @@ def run_blocking_audit(
                     not_passed.append(name)
             if not_passed:
                 blockers.append(_blocker("preflight_dynamic_gates_not_passed", f"preflight reports are present but not passed: {', '.join(not_passed[:8])}{'...' if len(not_passed) > 8 else ''}"))
+    else:
+        blockers.append(_blocker("preflight_dynamic_gates_not_passed", "no preflight output_dir was provided; dynamic gate reports cannot be verified"))
 
     report = {
         "passed": not blockers,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,23 @@ def _sha256(path: Path) -> str | None:
 
 
 def _git(args: list[str]) -> str:
-    return subprocess.check_output(["git", *args], text=True).strip()
+    try:
+        return subprocess.check_output(["git", *args], text=True).strip()
+    except subprocess.CalledProcessError:
+        git_file = Path(".git")
+        if not git_file.is_file():
+            raise
+        text = git_file.read_text(encoding="utf-8").strip()
+        if not text.lower().startswith("gitdir:"):
+            raise
+        git_dir = text.split(":", 1)[1].strip().replace("\\", "/")
+        if len(git_dir) > 2 and git_dir[1:3] == ":/":
+            drive = git_dir[0].lower()
+            git_dir = f"/mnt/{drive}/{git_dir[3:]}"
+        env = os.environ.copy()
+        env["GIT_DIR"] = git_dir
+        env["GIT_WORK_TREE"] = str(Path.cwd())
+        return subprocess.check_output(["git", *args], text=True, env=env).strip()
 
 
 def _blocked(name: str, reason: str) -> dict[str, Any]:

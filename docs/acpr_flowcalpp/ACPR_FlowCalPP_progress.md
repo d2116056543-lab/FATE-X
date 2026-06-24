@@ -622,7 +622,8 @@ Generated: 2026-06-23 00:12:56
 
 ### 4. DynFlow V1 package implementation chronology
 - Created branch/worktree cpr_dynflow_v1 under E:/sbw/FATE_Drive/fate_x_acpr_dynflow_v1_worktree.
-- Implemented package namespace ate_x/acpr_dynflow and engine entrypoints for training, evaluation, preflight, audit, visualization, and supervision.
+- Implemented package namespace
+ate_x/acpr_dynflow and engine entrypoints for training, evaluation, preflight, audit, visualization, and supervision.
 - Added direct-image data path with formal frame shape [B,32,3,224,224].
 - Replaced placeholder visual/text paths with real Video Swin Kinetics and local BERT-base loaders.
 - Located real OIA/CalAlign predicate checkpoint and wired predicate_head.predicate_queries into the initializer.
@@ -638,8 +639,10 @@ Generated: 2026-06-23 00:12:56
 - Inspection found that 	rain_acpr_dynflow.py still selected best-text checkpoints from a fake placeholder score.
 - Inspection found that eval_acpr_dynflow.py did not yet emit real generated-caption ADAPT-style metrics.
 - Patched files currently modified in the worktree:
-  - ate_x/engine/eval_acpr_dynflow.py
-  - ate_x/engine/train_acpr_dynflow.py
+  -
+ate_x/engine/eval_acpr_dynflow.py
+  -
+ate_x/engine/train_acpr_dynflow.py
 - Patch intent:
   - generate model caption rows during evaluation;
   - call the ADAPT-style caption evaluation bridge when real data is available;
@@ -666,7 +669,8 @@ Generated: 2026-06-23 00:12:56
 ### 9. Post-commit final preflight and audit - 2026-06-23 05:17:35 +08:00
 - After committing the train/eval honesty patch and the expanded records, ran DynFlow final preflight on .background_runs/acpr_dynflow_v1_final_preflight_20260623_0515.
 - PREFLIGHT_EXIT=0 and AUDIT_EXIT=0.
-- Compact report: passed=true, lockers=[], missing_reports=[], ailed_reports=[].
+- Compact report: passed=true, lockers=[], missing_reports=[],
+ailed_reports=[].
 - Confirmed OIA audit from oia_predicate_transfer_audit.json and gradient audit from gate_gradient_chain.json.
 - This section will be committed as documentation, then another final preflight must be run for the final post-doc HEAD.
 ## 2026-06-23 ACPR-DynFlow V1 训练监督时间线
@@ -747,3 +751,34 @@ Generated: 2026-06-23 00:12:56
 - Synthetic 1-step CPU probe passed: `samples_per_second=0.8721`, `formal_gate_passed=true`; this is smoke only.
 - Real BDD-X 1-step CPU probe ran through dataloader and model: `samples_per_second=0.0361`, `projected_epoch_hours=126.12`, `formal_gate_passed=false`.
 - This CPU result is not a formal blocker for GPU training, but it proves the gate now measures real data and will block unsuitable launches instead of rubber-stamping a synthetic probe.
+
+## 2026-06-24 22:33:56 ACPR-DynFlow-Swin V1 progress
+- Located canonical process logs: docs/acpr_flowcalpp/ACPR_FlowCalPP_task_plan.md, findings.md, progress.md.
+- Confirmed no new process-md should be created.
+- Confirmed WSL adapt environment can run torch with CUDA.
+- Next actions: run lightweight WSL import/compile smoke, then direct-image smoke if GPU memory is available; if projected epoch >2h, training will remain blocked.
+
+
+## 2026-06-24 23:06:02 ACPR-DynFlow-Swin V1 gate/debug update
+
+- Re-read the formal DynFlow-Swin plan/checklist/config and audited the current formal namespace.
+- Found formal dynamic preflight is still blocking by design: it writes blocked reports and does not yet execute all required dynamic gates.
+- Ran real WSL/Linux CUDA direct-image model smoke on BDD-X through Video Swin-B.
+- First smoke failure: `mat1 and mat2 shapes cannot be multiplied (784x128 and 256x5)`.
+  - Root cause: `model.py` reshaped Swin final dense tokens with hard-coded 32 time steps; repository Video Swin native final stage has 16 time steps, so the projected 256-dim tokens were incorrectly split into 128 dims.
+  - Fix: use `bb.final_grid.shape[1]` as native final time and pass all native final steps into semantic consolidation.
+  - Regression: added `test_model_uses_backbone_native_final_time_for_semantic_tokens`.
+- Second smoke failure: `mat1 and mat2 shapes cannot be multiplied (16x1024 and 256x768)`.
+  - Root cause: `global_to_motion` assumed predicate dim 256 while Swin final temporal-global tokens are 1024-dim.
+  - Fix: changed `global_to_motion` to `nn.LazyLinear(motion_dim)` so runtime binds to native Swin final dim.
+  - Regression: added `test_model_global_projection_accepts_native_swin_final_dim`.
+- Targeted WSL pytest passed: `4 passed, 1 warning` for native-time/global-projection and semantic-consolidation tests.
+- Real WSL/CUDA direct-image smoke passed after fixes:
+  - `loss=44.8320`, frames `[1,32,3,224,224]`, one backbone forward.
+  - peak allocated/reserved: `7146/9010 MiB`.
+  - nonzero gradients reached backbone, predicates, traffic, motion, ledger, and text modules.
+  - blocker remains: `predicate_nnpu=0.0`; this is still a formal plan gap, not a passed PU implementation.
+- Ran 100-step real CUDA throughput probe with current script, batch=1:
+  - `samples_per_second=3.1587`, projected epoch `1.4415h`, under the user hard requirement of `<2h`.
+  - Caveat: this probe does not yet include full formal candidate sweep/component timing/optimizer timing required by the plan, so it is useful but not sufficient for review pass.
+- Training remains blocked because ADAPT metric parity, OIA transfer dynamic evidence, nnPU/CalAlign dynamic evidence, intervention recompute, Canvas/Atlas, and full preflight review pass are still incomplete.

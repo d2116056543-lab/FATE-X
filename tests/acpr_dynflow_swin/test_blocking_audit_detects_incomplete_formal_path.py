@@ -10,5 +10,5 @@ def test_blocking_audit_reports_required_dynamic_gate_blockers():
     )
     codes = {item["code"] for item in report["blockers"]}
     assert report["passed"] is False
-    assert "preflight_smoke_not_full_gates" in codes
+    assert "preflight_dynamic_gates_not_passed" in codes
     assert report["review_pass_authorized"] is False
