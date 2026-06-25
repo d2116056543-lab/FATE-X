@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fate_x.acpr_dynflow_swin.config import load_config, build_config_consumer_manifest
-from fate_x.engine.audit_acpr_dynflow_swin import REQUIRED_REPORTS, audit_import_graph
+from fate_x.engine.audit_acpr_dynflow_swin import REQUIRED_REPORTS, audit_import_graph, verify_review_pass
 
 
 def _json(path: Path, payload: dict[str, Any]) -> None:
@@ -85,6 +85,56 @@ def merge_external_reports(
         mechanism_path = Path(mechanism_report)
         if mechanism_path.exists():
             reports["gate_mechanism_fit_128.json"] = _load_report(mechanism_path)
+
+
+def _is_passed(payload: dict[str, Any]) -> bool:
+    return payload.get("passed") is True or payload.get("status") in {"pass", "passed"}
+
+
+def apply_review_pass_report(reports: dict[str, dict[str, Any]], out_dir: Path, expected_head: str) -> None:
+    review_path = out_dir / "REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt"
+    non_review_blocked = [
+        name for name, payload in reports.items()
+        if name != "review_report.json" and not _is_passed(payload)
+    ]
+    if non_review_blocked:
+        reports["review_report.json"] = {
+            "status": "blocked",
+            "passed": False,
+            "review_pass_authorized": False,
+            "reason": "non-review reports are not passed",
+            "blocked_reports": non_review_blocked,
+        }
+        return
+    if not review_path.exists():
+        reports["review_report.json"] = {
+            "status": "blocked",
+            "passed": False,
+            "review_pass_authorized": False,
+            "reason": "review pass requires independent reviewer and clean pushed SHA after all reports pass",
+            "required_reports": list(REQUIRED_REPORTS),
+        }
+        return
+    verification = verify_review_pass(review_path, expected_head)
+    if not verification["passed"]:
+        reports["review_report.json"] = {
+            "status": "blocked",
+            "passed": False,
+            "review_pass_authorized": False,
+            "reason": "review pass file failed verification",
+            "blockers": verification["blockers"],
+        }
+        return
+    payload = verification["payload"]
+    reports["review_report.json"] = {
+        "status": "pass",
+        "passed": True,
+        "review_pass_authorized": True,
+        "reviewer": payload.get("reviewer"),
+        "local_head": payload.get("local_head"),
+        "github_head": payload.get("github_head"),
+        "review_pass": str(review_path),
+    }
 
 
 def _static_pass_reports(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -221,13 +271,7 @@ def run_preflight(
     dynamic_block_reason = "missing required executable dynamic evidence for this exact preflight"
     for name in REQUIRED_REPORTS:
         reports.setdefault(name, _blocked(name, dynamic_block_reason))
-    reports["review_report.json"] = {
-        "status": "pass" if all(payload.get("passed") is True for payload in reports.values()) else "blocked",
-        "passed": all(payload.get("passed") is True for payload in reports.values()),
-        "review_pass_authorized": False,
-        "reason": "review pass requires independent reviewer and clean pushed SHA after all reports pass",
-        "required_reports": list(REQUIRED_REPORTS),
-    }
+    apply_review_pass_report(reports, out_dir, expected_head=head)
     for name, payload in reports.items():
         _json(out_dir / name, payload)
     summary = {

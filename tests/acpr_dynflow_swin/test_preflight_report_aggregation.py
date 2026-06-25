@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fate_x.engine.run_acpr_dynflow_swin_preflight import merge_external_reports
+from fate_x.engine.audit_acpr_dynflow_swin import REQUIRED_REPORTS
+from fate_x.engine.run_acpr_dynflow_swin_preflight import apply_review_pass_report, merge_external_reports
 
 
 def _write(path: Path, payload: dict) -> None:
@@ -35,3 +36,26 @@ def test_merge_external_reports_copies_real_reports_and_marks_missing_without_pl
     assert reports["throughput_memory_probe.json"]["selected_candidate"]["batch_size"] == 4
     assert reports["gate_mechanism_fit_128.json"]["sample_count"] == 128
     assert "requires real" not in json.dumps(reports).lower()
+
+
+def test_apply_review_pass_report_marks_review_gate_passed_when_bound_to_head(tmp_path: Path):
+    out = tmp_path / "preflight"
+    out.mkdir()
+    head = "a" * 40
+    reports = {name: {"status": "pass", "passed": True} for name in REQUIRED_REPORTS}
+    reports["review_report.json"] = {"status": "blocked", "passed": False}
+    pass_payload = {
+        "authorization": "ACPR_DYNFLOW_SWIN_V1_IMPLEMENTATION_REVIEW_PASS",
+        "reviewer": "independent-reviewer",
+        "local_head": head,
+        "github_head": head,
+        "clean": True,
+        "all_reports_passed": True,
+    }
+    _write(out / "REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt", pass_payload)
+
+    apply_review_pass_report(reports, out, expected_head=head)
+
+    assert reports["review_report.json"]["passed"] is True
+    assert reports["review_report.json"]["review_pass_authorized"] is True
+    assert reports["review_report.json"]["reviewer"] == "independent-reviewer"
