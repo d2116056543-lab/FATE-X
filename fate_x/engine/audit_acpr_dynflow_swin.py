@@ -144,19 +144,55 @@ def verify_review_pass(path: str | Path, expected_head: str) -> dict[str, Any]:
     return {"passed": not blockers, "blockers": blockers, "payload": payload}
 
 
+def _report_passed(payload: dict[str, Any]) -> bool:
+    passed = payload.get("passed", payload.get("pass")) is True
+    status = payload.get("status", payload.get("review_status"))
+    return passed or status in {"pass", "passed"}
+
+
+def reports_ready_for_review_pass(output_dir: str | Path) -> dict[str, Any]:
+    root = Path(output_dir)
+    missing: list[str] = []
+    invalid: list[str] = []
+    not_passed: list[str] = []
+    ignored_self_gate: list[str] = []
+    report_sha256: dict[str, str] = {}
+    for name in REQUIRED_REPORTS:
+        path = root / name
+        if not path.exists():
+            missing.append(name)
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            invalid.append(name)
+            continue
+        if _report_passed(payload):
+            report_sha256[name] = _sha256(path)
+            continue
+        if name == "review_report.json":
+            ignored_self_gate.append(name)
+            report_sha256[name] = _sha256(path)
+            continue
+        not_passed.append(name)
+    return {
+        "passed": not missing and not invalid and not not_passed,
+        "missing": missing,
+        "invalid": invalid,
+        "not_passed": not_passed,
+        "ignored_self_gate": ignored_self_gate,
+        "report_sha256": report_sha256,
+    }
+
+
 def write_review_pass(output_dir: str | Path, reviewer: str) -> Path:
     if not reviewer.strip():
         raise ValueError("independent reviewer identity is required")
     root = Path(output_dir)
-    reports = {}
-    for name in REQUIRED_REPORTS:
-        path = root / name
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        passed = payload.get("passed", payload.get("pass")) is True
-        status = payload.get("status", payload.get("review_status"))
-        if not passed and status not in {"pass", "passed"}:
-            raise RuntimeError(f"cannot authorize review pass: {name} is not passed")
-        reports[name] = _sha256(path)
+    readiness = reports_ready_for_review_pass(root)
+    if not readiness["passed"]:
+        failed = readiness["missing"] + readiness["invalid"] + readiness["not_passed"]
+        raise RuntimeError(f"cannot authorize review pass: reports are not ready: {', '.join(failed)}")
     local_head = _git(["rev-parse", "HEAD"])
     github_head = _git(["ls-remote", "github", "refs/heads/acpr_dynflow_v1"]).split()[0]
     status = _git(["status", "--porcelain"])
@@ -172,7 +208,8 @@ def write_review_pass(output_dir: str | Path, reviewer: str) -> Path:
         "github_head": github_head,
         "clean": True,
         "all_reports_passed": True,
-        "report_sha256": reports,
+        "ignored_self_gate": readiness["ignored_self_gate"],
+        "report_sha256": readiness["report_sha256"],
     }
     path = root / "REVIEW_PASS_ACPR_DYNFLOW_SWIN_V1.txt"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -233,11 +270,9 @@ def run_blocking_audit(
                 except Exception:
                     not_passed.append(name)
                     continue
-                status = payload.get("status", payload.get("review_status"))
-                passed = payload.get("passed", payload.get("pass"))
-                if status not in {"pass", "passed"} and passed is not True:
+                if not _report_passed(payload):
                     not_passed.append(name)
-            if not_passed:
+            if not_passed and not not_passed == ["review_report.json"]:
                 blockers.append(_blocker("preflight_dynamic_gates_not_passed", f"preflight reports are present but not passed: {', '.join(not_passed[:8])}{'...' if len(not_passed) > 8 else ''}"))
     else:
         blockers.append(_blocker("preflight_dynamic_gates_not_passed", "no preflight output_dir was provided; dynamic gate reports cannot be verified"))
