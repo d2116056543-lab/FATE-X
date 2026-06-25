@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from fate_x.engine.audit_acpr_dynflow_swin import REQUIRED_REPORTS
-from fate_x.engine.run_acpr_dynflow_swin_preflight import apply_review_pass_report, merge_external_reports
+from fate_x.engine.run_acpr_dynflow_swin_preflight import apply_review_pass_report, build_preflight_summary, merge_external_reports
 
 
 def _write(path: Path, payload: dict) -> None:
@@ -59,3 +59,13 @@ def test_apply_review_pass_report_marks_review_gate_passed_when_bound_to_head(tm
     assert reports["review_report.json"]["passed"] is True
     assert reports["review_report.json"]["review_pass_authorized"] is True
     assert reports["review_report.json"]["reviewer"] == "independent-reviewer"
+
+
+def test_build_preflight_summary_passes_when_no_blocked_reports(tmp_path: Path):
+    reports = {name: {"status": "pass", "passed": True} for name in REQUIRED_REPORTS}
+
+    summary = build_preflight_summary(reports, tmp_path)
+
+    assert summary["status"] == "pass"
+    assert summary["passed"] is True
+    assert summary["blocked_reports"] == []

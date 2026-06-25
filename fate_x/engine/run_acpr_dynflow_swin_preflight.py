@@ -137,6 +137,17 @@ def apply_review_pass_report(reports: dict[str, dict[str, Any]], out_dir: Path, 
     }
 
 
+def build_preflight_summary(reports: dict[str, dict[str, Any]], out_dir: Path) -> dict[str, Any]:
+    blocked = [name for name, payload in reports.items() if not _is_passed(payload)]
+    passed = not blocked
+    return {
+        "status": "pass" if passed else "blocked",
+        "passed": passed,
+        "output_dir": str(out_dir),
+        "blocked_reports": blocked,
+    }
+
+
 def _static_pass_reports(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
     paths = cfg.get("paths", {})
     data = cfg.get("data", {})
@@ -274,12 +285,7 @@ def run_preflight(
     apply_review_pass_report(reports, out_dir, expected_head=head)
     for name, payload in reports.items():
         _json(out_dir / name, payload)
-    summary = {
-        "status": "blocked",
-        "passed": False,
-        "output_dir": str(out_dir),
-        "blocked_reports": [name for name, payload in reports.items() if payload.get("passed") is not True],
-    }
+    summary = build_preflight_summary(reports, out_dir)
     _json(out_dir / "preflight_summary.json", summary)
     return summary
 
